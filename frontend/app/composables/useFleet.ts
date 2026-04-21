@@ -47,7 +47,7 @@ export function useFleet() {
         : undefined;
 
     const order = {
-      id: `${Date.now()}`,
+      id: crypto.randomUUID(),
       pickup_base_id: pickupBase?.id ?? "base-north",
       dropoff_point_id: dropoff?.id ?? "dp-1",
       payload_kg: 1.2,

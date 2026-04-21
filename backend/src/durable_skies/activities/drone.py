@@ -32,7 +32,6 @@ async def takeoff_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id
     await append_event(fleet_workflow_id, f"🛫 {drone_id} takeoff", FleetEventType.INFO)
     await asyncio.sleep(1.5)
     await update_drone(drone_workflow_id, state=WorkflowState.IN_FLIGHT)
-    await append_event(fleet_workflow_id, f"🚁 {drone_id} airborne", FleetEventType.INFO)
     await advance_leg(drone_workflow_id)
     return f"Drone {drone_id} is airborne"
 
@@ -138,7 +137,6 @@ async def pickup_package(
         FleetEventType.SIGNAL,
     )
     await asyncio.sleep(1.0)
-    await update_drone(drone_workflow_id, add_signal="dispatched")
     await advance_leg(drone_workflow_id)
     return f"Order {order_id} picked up by {drone_id}"
 

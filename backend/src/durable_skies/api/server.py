@@ -39,13 +39,11 @@ async def lifespan(app: FastAPI):
         plugins=[GoogleAdkPlugin()],
     )
     app.state.client = client
-    app.state.settings = settings
 
     # Ensure the fleet supervisor is running. If it was already started, that's fine.
     try:
         await client.start_workflow(
             FleetWorkflow.run,
-            args=[settings.anthropic_model],
             id=FLEET_WORKFLOW_ID,
             task_queue=TASK_QUEUE,
         )

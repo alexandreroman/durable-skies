@@ -17,12 +17,9 @@ class Settings(BaseSettings):
     temporal_namespace: str = Field(default="default")
 
     anthropic_model: str = Field(default="anthropic/claude-sonnet-4-6")
-    anthropic_api_key: str | None = Field(default=None)
 
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000)
-
-    fleet_size: int = Field(default=6, ge=1, le=50)
 
 
 @lru_cache

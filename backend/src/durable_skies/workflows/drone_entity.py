@@ -56,7 +56,6 @@ class DroneWorkflow:
         self._home_base_id: str | None = None
         self._home_location: Coordinate | None = None
         self._fleet_workflow_id: str | None = None
-        self._model_name: str | None = None
 
         self._state: WorkflowState = WorkflowState.IDLE
         self._position: Coordinate | None = None
@@ -85,7 +84,6 @@ class DroneWorkflow:
         self._home_location = home_location
         self._position = home_location.model_copy()
         self._fleet_workflow_id = fleet_workflow_id
-        self._model_name = model_name
 
         # Push an initial IDLE snapshot so the fleet knows we exist.
         await self._sync_to_fleet()

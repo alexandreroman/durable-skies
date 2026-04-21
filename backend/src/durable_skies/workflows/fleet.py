@@ -39,7 +39,7 @@ class FleetWorkflow:
         self._shutdown = False
 
     @workflow.run
-    async def run(self, model_name: str) -> None:
+    async def run(self) -> None:
         workflow.logger.info("FleetWorkflow started")
         while not self._shutdown:
             await workflow.wait_condition(lambda: bool(self._pending) or self._shutdown)
@@ -116,7 +116,7 @@ class FleetWorkflow:
     @workflow.query
     def get_fleet_state(self) -> FleetState:
         return FleetState(
-            drones=[self._drones[d_id] for d_id in sorted(self._drones)],
+            drones=[self._drones[d_id] for d_id in self._drone_order],
             bases=list(DEPOTS),
             delivery_points=list(DELIVERY_POINTS),
             events=list(self._events),
