@@ -261,6 +261,7 @@ function orderLabel(orderId: string): string {
 .ds-plan-step.is-active {
   width: 8px;
   height: 8px;
+  transform-origin: center;
   animation: ds-plan-glow 1.6s ease-in-out infinite;
 }
 
@@ -288,9 +289,11 @@ function orderLabel(orderId: string): string {
   0%,
   100% {
     box-shadow: 0 0 2px 0 color-mix(in srgb, currentColor 60%, transparent);
+    transform: scale(1);
   }
   50% {
     box-shadow: 0 0 5px 0 color-mix(in srgb, currentColor 60%, transparent);
+    transform: scale(1.35);
   }
 }
 </style>
