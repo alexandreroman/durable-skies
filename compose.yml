@@ -62,7 +62,7 @@ services:
       - "8000:8000"
     restart: unless-stopped
 
-  ui:
+  frontend:
     build:
       context: ./frontend
     # Evaluated in the user's browser, so localhost points to the host.
