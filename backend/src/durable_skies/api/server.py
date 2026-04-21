@@ -8,6 +8,7 @@ On startup the API auto-starts the singleton `FleetWorkflow` (id
 `fleet-supervisor`) so the UI has something to poll immediately.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import ClassVar
@@ -95,7 +96,11 @@ async def get_fleet() -> FleetState:
     client: Client = app.state.client
     handle = client.get_workflow_handle(FLEET_WORKFLOW_ID)
     try:
-        return await handle.query(FleetWorkflow.get_fleet_state)
+        # Queries need a live worker; cap the wait so a worker restart doesn't freeze the UI poll loop.
+        return await asyncio.wait_for(handle.query(FleetWorkflow.get_fleet_state), timeout=2.0)
+    except TimeoutError as err:
+        log.warning("Fleet query timed out; worker may be unavailable")
+        raise HTTPException(status_code=503, detail="fleet query timed out — worker may be unavailable") from err
     except WorkflowFailureError as err:  # workflow failed: surface as 503
         raise HTTPException(status_code=503, detail=str(err)) from err
 

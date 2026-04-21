@@ -82,7 +82,12 @@ def build_drone_agent(
         tools=[
             activity_tool(takeoff_drone, start_to_close_timeout=short, retry_policy=fast_retry),
             activity_tool(land_drone, start_to_close_timeout=short, retry_policy=fast_retry),
-            activity_tool(navigate_drone, start_to_close_timeout=long, retry_policy=fast_retry),
+            activity_tool(
+                navigate_drone,
+                start_to_close_timeout=long,
+                heartbeat_timeout=timedelta(seconds=5),
+                retry_policy=fast_retry,
+            ),
             activity_tool(pickup_package, start_to_close_timeout=short, retry_policy=fast_retry),
             activity_tool(dropoff_package, start_to_close_timeout=short, retry_policy=fast_retry),
         ],
