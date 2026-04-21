@@ -119,6 +119,7 @@ class DroneWorkflow:
                         fleet_workflow_id,
                         home_base_id,
                         order,
+                        self._battery_pct,
                         model_name,
                     ],
                     id=self._current_delivery_workflow_id,

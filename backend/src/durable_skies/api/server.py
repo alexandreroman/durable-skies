@@ -45,6 +45,7 @@ async def lifespan(app: FastAPI):
     try:
         await client.start_workflow(
             FleetWorkflow.run,
+            args=[settings.anthropic_model],
             id=FLEET_WORKFLOW_ID,
             task_queue=TASK_QUEUE,
         )

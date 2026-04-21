@@ -104,11 +104,6 @@ async def navigate_drone(
                 f"⚠️ {drone_id} battery {battery:.0f}%",
                 FleetEventType.INCIDENT,
             )
-            await append_event(
-                fleet_workflow_id,
-                "🤖 Recovery agent → RTB",
-                FleetEventType.SIGNAL,
-            )
             raise ApplicationError("battery_critical", non_retryable=True)
 
         await asyncio.sleep(_NAV_STEP_DELAY_S)

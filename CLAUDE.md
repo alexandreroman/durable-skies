@@ -27,8 +27,9 @@ make ui         # in terminal 3
 
 - `backend/` — Python package `durable_skies` with
   Temporal workflows, activities, ADK agents
-  (per-drone pilot, dispatcher, route optimizer),
-  and the FastAPI gateway.
+  (dispatcher for order assignment, anomaly handler
+  for in-flight incident recovery), and the FastAPI
+  gateway.
 - `frontend/` — Nuxt 4 dashboard: map, agent panel,
   streaming event log.
 

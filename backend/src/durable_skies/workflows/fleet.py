@@ -5,12 +5,22 @@ FastAPI layer through a query, and routes every incoming order to a per-drone
 entity workflow (`DroneWorkflow`). Entities signal back with drone updates;
 activities signal back with event-log entries. The fleet stays the single
 source of truth for the UI while remaining a thin aggregator.
+
+Order-to-drone assignment is delegated to an ADK dispatcher agent (see
+`..agents.dispatcher`). A round-robin picker is kept as a deterministic
+fallback when the agent fails or returns an invalid choice.
 """
 
+import json
 from collections import deque
 from typing import Any
 
+from google.adk.runners import InMemoryRunner
+from google.genai import types
 from temporalio import workflow
+
+with workflow.unsafe.imports_passed_through():
+    from ..agents import DISPATCH_DECISION_KEY, build_dispatcher_agent
 
 from .. import drone_workflow_id
 from ..models import (
@@ -37,9 +47,11 @@ class FleetWorkflow:
         self._events: deque[FleetEvent] = deque(maxlen=MAX_EVENTS)
         self._next_drone_idx = 0
         self._shutdown = False
+        self._model_name: str | None = None
 
     @workflow.run
-    async def run(self) -> None:
+    async def run(self, model_name: str) -> None:
+        self._model_name = model_name
         workflow.logger.info("FleetWorkflow started")
         while not self._shutdown:
             await workflow.wait_condition(lambda: bool(self._pending) or self._shutdown)
@@ -47,13 +59,24 @@ class FleetWorkflow:
                 return
 
             order = self._pending.popleft()
-            drone_id = self._pick_idle_drone()
-            if drone_id is None:
+            idle_drones = [d for d in self._drones.values() if d.state == WorkflowState.IDLE]
+            if not idle_drones:
                 # No idle drone — re-queue at head and wait for one to free up.
                 self._pending.appendleft(order)
                 await workflow.wait_condition(
                     lambda: self._has_idle_drone() or self._shutdown
                 )
+                continue
+
+            drone_id = await self._dispatch_with_agent(order, idle_drones)
+            if (
+                drone_id is None
+                or drone_id not in self._drones
+                or self._drones[drone_id].state != WorkflowState.IDLE
+            ):
+                drone_id = self._pick_idle_drone()
+            if drone_id is None:
+                self._pending.appendleft(order)
                 continue
 
             drone = self._drones[drone_id]
@@ -68,6 +91,78 @@ class FleetWorkflow:
             # DeliveryWorkflow as a child and signals back with state updates.
             drone_handle = workflow.get_external_workflow_handle(drone_workflow_id(drone_id))
             await drone_handle.signal("assign_order", order)
+
+    async def _dispatch_with_agent(
+        self,
+        order: Order,
+        idle_drones: list[DroneRuntimeState],
+    ) -> str | None:
+        """Ask the dispatcher agent to pick an idle drone; None means fall back."""
+        if self._model_name is None:
+            return None
+
+        try:
+            agent = build_dispatcher_agent(self._model_name)
+            runner = InMemoryRunner(agent=agent, app_name="durable-skies")
+            session = await runner.session_service.create_session(
+                app_name="durable-skies",
+                user_id="fleet-dispatcher",
+            )
+
+            payload = {
+                "order": {
+                    "id": order.id,
+                    "pickup_base_id": order.pickup_base_id,
+                    "dropoff_point_id": order.dropoff_point_id,
+                    "payload_kg": order.payload_kg,
+                },
+                "idle_drones": [
+                    {
+                        "id": d.id,
+                        "name": d.name,
+                        "home_base_id": d.home_base_id,
+                        "battery_pct": d.battery_pct,
+                        "position": {"lat": d.position.lat, "lon": d.position.lon},
+                    }
+                    for d in idle_drones
+                ],
+            }
+            prompt = json.dumps(payload)
+
+            async for _ in runner.run_async(
+                user_id="fleet-dispatcher",
+                session_id=session.id,
+                new_message=types.Content(role="user", parts=[types.Part(text=prompt)]),
+            ):
+                pass
+
+            refreshed = await runner.session_service.get_session(
+                app_name="durable-skies",
+                user_id="fleet-dispatcher",
+                session_id=session.id,
+            )
+            decision = (refreshed.state or {}).get(DISPATCH_DECISION_KEY, {}) if refreshed else {}
+            drone_id = decision.get("drone_id")
+            reasoning = decision.get("reasoning", "")
+
+            if not drone_id or drone_id not in self._drones:
+                return None
+            if self._drones[drone_id].state != WorkflowState.IDLE:
+                return None
+
+            drone_name = self._drones[drone_id].name
+            snippet = reasoning[:60] + "..." if len(reasoning) > 60 else reasoning
+            self._append_event(FleetEventType.INFO, f"🤖 Dispatcher → {drone_name} ({snippet})")
+            return drone_id
+        except Exception as err:
+            # Any failure (LLM error, sandbox hiccup, malformed decision) yields the
+            # deterministic round-robin fallback so orders keep flowing.
+            workflow.logger.warning("Dispatcher agent failed: %s", err)
+            self._append_event(
+                FleetEventType.INFO,
+                "⚠️ Dispatcher failed, falling back to round-robin",
+            )
+            return None
 
     @workflow.signal
     def submit_order(self, order: Order) -> None:
