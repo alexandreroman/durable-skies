@@ -121,3 +121,4 @@ class FleetState(BaseModel):
     events: list[FleetEvent]  # newest first, up to 40
     pending_orders_count: int = 0
     dispatching: bool = False
+    dispatchable_drones_count: int = 0

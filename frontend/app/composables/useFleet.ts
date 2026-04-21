@@ -10,6 +10,7 @@ export function useFleet() {
   const events = ref<FleetEvent[]>([]);
   const pendingOrdersCount = ref(0);
   const dispatching = ref(false);
+  const dispatchableCount = ref(0);
   const selectedDrone = ref<string | null>(null);
   const hoveredDrone = ref<string | null>(null);
 
@@ -26,6 +27,7 @@ export function useFleet() {
       events.value = state.events;
       pendingOrdersCount.value = state.pending_orders_count ?? 0;
       dispatching.value = state.dispatching ?? false;
+      dispatchableCount.value = state.dispatchable_drones_count ?? 0;
     } catch {
       // swallow: next poll will retry
     }
@@ -93,6 +95,7 @@ export function useFleet() {
     events,
     pendingOrdersCount,
     dispatching,
+    dispatchableCount,
     selectedDrone,
     hoveredDrone,
     selectDrone,

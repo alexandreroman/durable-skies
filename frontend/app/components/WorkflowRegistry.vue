@@ -18,6 +18,7 @@ const props = defineProps<{
   drones: Drone[];
   bases: Base[];
   selectedDrone: string | null;
+  dispatchableCount: number;
 }>();
 
 const emit = defineEmits<{ select: [id: string | null]; hover: [id: string | null] }>();
@@ -55,9 +56,12 @@ function orderLabel(orderId: string): string {
       @click.self="emit('select', null)"
     >
       <span class="ds-section-label">Drones</span>
-      <span class="ds-count-pill">
-        <span class="ds-count-num">{{ drones.length }}</span>
-        <span>active</span>
+      <span
+        class="ds-count-pill"
+        :title="`${dispatchableCount} of ${drones.length} drone${drones.length === 1 ? '' : 's'} ready for dispatch`"
+      >
+        <span class="ds-count-num">{{ dispatchableCount }}</span>
+        <span>/ {{ drones.length }} ready</span>
       </span>
     </div>
 

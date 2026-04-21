@@ -79,6 +79,7 @@ export interface FleetState {
   events: FleetEvent[];
   pending_orders_count: number;
   dispatching: boolean;
+  dispatchable_drones_count: number;
 }
 
 export interface WorkflowStateStyle {

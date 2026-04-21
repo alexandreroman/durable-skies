@@ -93,16 +93,10 @@ class FleetWorkflow:
                 return
 
             order = self._pending[0]
-            idle_drones = [
-                d for d in self._drones.values()
-                if d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT
-            ]
+            idle_drones = [d for d in self._drones.values() if self._is_dispatchable(d)]
             if not idle_drones:
                 await workflow.wait_condition(
-                    lambda: any(
-                        d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT
-                        for d in self._drones.values()
-                    )
+                    lambda: any(self._is_dispatchable(d) for d in self._drones.values())
                     or self._shutdown
                 )
                 continue
@@ -246,6 +240,7 @@ class FleetWorkflow:
 
     @workflow.query
     def get_fleet_state(self) -> FleetState:
+        dispatchable_drones_count = sum(1 for d in self._drones.values() if self._is_dispatchable(d))
         return FleetState(
             drones=[self._drones[d_id] for d_id in self._drone_order],
             bases=list(DEPOTS),
@@ -253,6 +248,7 @@ class FleetWorkflow:
             events=list(self._events),
             pending_orders_count=len(self._pending),
             dispatching=self._dispatching,
+            dispatchable_drones_count=dispatchable_drones_count,
         )
 
     def _append_event(self, event_type: FleetEventType, message: str) -> None:
@@ -265,13 +261,15 @@ class FleetWorkflow:
             )
         )
 
+    def _is_dispatchable(self, d: DroneRuntimeState) -> bool:
+        return d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT
+
     def _pick_idle_drone(self) -> str | None:
         n = len(self._drone_order)
         for i in range(n):
             idx = (self._next_drone_idx + i) % n
             drone_id = self._drone_order[idx]
-            d = self._drones[drone_id]
-            if d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT:
+            if self._is_dispatchable(self._drones[drone_id]):
                 self._next_drone_idx = (idx + 1) % n
                 return drone_id
         return None

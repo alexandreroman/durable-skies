@@ -9,6 +9,7 @@ const {
   events,
   pendingOrdersCount,
   dispatching,
+  dispatchableCount,
   selectedDrone,
   hoveredDrone,
   selectDrone,
@@ -103,6 +104,7 @@ const mapFocusedDrone = computed(() => {
           :drones="drones"
           :bases="bases"
           :selected-drone="selectedDrone"
+          :dispatchable-count="dispatchableCount"
           @select="(id) => selectDrone(id)"
           @hover="(id) => setHoveredDrone(id)"
         />
