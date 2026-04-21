@@ -355,7 +355,7 @@ a.ds-order-chip:hover {
 
 .ds-event-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 4px 12px;
   font-family: var(--ds-font-mono);
@@ -371,6 +371,7 @@ a.ds-order-chip:hover {
   font-size: 9px;
   color: var(--ds-text-dim);
   white-space: nowrap;
+  padding-top: 1px;
 }
 
 .ds-event-bar {
@@ -381,9 +382,8 @@ a.ds-order-chip:hover {
 }
 
 .ds-event-message {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 /* --- Map ----------------------------------------------------------------- */

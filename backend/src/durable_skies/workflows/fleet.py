@@ -182,8 +182,8 @@ class FleetWorkflow:
                 return None
 
             drone_name = self._drones[drone_id].name
-            snippet = reasoning[:60] + "..." if len(reasoning) > 60 else reasoning
-            self._append_event(FleetEventType.INFO, f"🤖 Dispatcher → {drone_name} ({snippet})")
+            workflow.logger.info("Dispatcher picked %s: %s", drone_name, reasoning)
+            self._append_event(FleetEventType.INFO, f"🤖 Dispatcher → {drone_name}")
             return drone_id
         except Exception as err:
             # Any failure (LLM error, sandbox hiccup, malformed decision) yields the
