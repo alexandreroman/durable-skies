@@ -77,6 +77,7 @@ export interface FleetState {
   delivery_points: DeliveryPoint[];
   events: FleetEvent[];
   pending_orders_count: number;
+  dispatching: boolean;
 }
 
 export interface WorkflowStateStyle {

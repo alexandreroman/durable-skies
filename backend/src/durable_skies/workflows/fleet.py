@@ -51,6 +51,7 @@ class FleetWorkflow:
         self._shutdown = False
         self._model_name: str | None = None
         self._fast_model_name: str | None = None
+        self._dispatching: bool = False
 
     @workflow.run
     async def run(
@@ -106,7 +107,12 @@ class FleetWorkflow:
                 )
                 continue
 
-            drone_id = await self._dispatch_with_agent(order, idle_drones)
+            # Flag is scoped tightly around the LLM call so the UI only flashes during real agent latency.
+            self._dispatching = True
+            try:
+                drone_id = await self._dispatch_with_agent(order, idle_drones)
+            finally:
+                self._dispatching = False
             if (
                 drone_id is None
                 or drone_id not in self._drones
@@ -246,6 +252,7 @@ class FleetWorkflow:
             delivery_points=list(DELIVERY_POINTS),
             events=list(self._events),
             pending_orders_count=len(self._pending),
+            dispatching=self._dispatching,
         )
 
     def _append_event(self, event_type: FleetEventType, message: str) -> None:

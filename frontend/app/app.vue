@@ -7,6 +7,7 @@ const {
   deliveryPoints,
   events,
   pendingOrdersCount,
+  dispatching,
   selectedDrone,
   selectDrone,
   submitOrder,
@@ -51,6 +52,14 @@ const {
       </div>
 
       <div class="ml-auto flex items-center gap-3">
+        <span
+          v-if="dispatching"
+          class="ds-dispatching-pill"
+          title="Dispatcher agent is choosing a drone"
+        >
+          <span class="ds-dispatching-dot" aria-hidden="true"></span>
+          <span>Dispatching</span>
+        </span>
         <span
           v-if="pendingOrdersCount > 0"
           class="ds-queue-pill"
@@ -111,6 +120,36 @@ const {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--ds-violet);
+}
+.ds-dispatching-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ds-divider);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ds-text);
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  user-select: none;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.ds-dispatching-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ds-violet);
+  animation: ds-dispatching-pulse 1s ease-in-out infinite;
+}
+@keyframes ds-dispatching-pulse {
+  0%, 100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 .ds-event-log-enter-active {
   transition: opacity 220ms ease-out, transform 220ms ease-out;

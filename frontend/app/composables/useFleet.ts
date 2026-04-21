@@ -9,6 +9,7 @@ export function useFleet() {
   const deliveryPoints = ref<DeliveryPoint[]>([]);
   const events = ref<FleetEvent[]>([]);
   const pendingOrdersCount = ref(0);
+  const dispatching = ref(false);
   const selectedDrone = ref<string | null>(null);
 
   const config = useRuntimeConfig();
@@ -23,6 +24,7 @@ export function useFleet() {
       deliveryPoints.value = state.delivery_points;
       events.value = state.events;
       pendingOrdersCount.value = state.pending_orders_count ?? 0;
+      dispatching.value = state.dispatching ?? false;
     } catch {
       // swallow: next poll will retry
     }
@@ -85,6 +87,7 @@ export function useFleet() {
     deliveryPoints,
     events,
     pendingOrdersCount,
+    dispatching,
     selectedDrone,
     selectDrone,
     submitOrder,
