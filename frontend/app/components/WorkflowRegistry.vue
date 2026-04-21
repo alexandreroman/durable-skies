@@ -233,8 +233,7 @@ function orderLabel(orderId: string): string {
   align-items: center;
   gap: 3px;
   flex-wrap: nowrap;
-  overflow: hidden;
-  min-height: 10px;
+  min-height: 16px;
 }
 
 .ds-chip-row {
