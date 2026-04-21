@@ -440,3 +440,13 @@ a.ds-order-chip:hover {
 .ds-map-legend-row + .ds-map-legend-row {
   margin-top: 2px;
 }
+
+.ds-map-logo {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+  height: 28px;
+  width: auto;
+  opacity: 0.25;
+  pointer-events: none;
+}
