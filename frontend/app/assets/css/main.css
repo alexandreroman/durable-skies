@@ -273,7 +273,7 @@ body,
   font-size: 9px;
   color: var(--ds-text-muted);
   min-width: 24px;
-  text-align: left;
+  text-align: right;
 }
 
 .ds-signal-chip {
