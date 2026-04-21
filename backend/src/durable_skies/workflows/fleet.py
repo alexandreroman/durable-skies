@@ -36,6 +36,7 @@ from ..models import (
 from ..world import DELIVERY_POINTS, DEPOTS, initial_drones
 
 MAX_EVENTS = 40
+_HISTORY_THRESHOLD = 2000
 
 
 @workflow.defn
@@ -50,10 +51,37 @@ class FleetWorkflow:
         self._model_name: str | None = None
 
     @workflow.run
-    async def run(self, model_name: str) -> None:
+    async def run(
+        self,
+        model_name: str,
+        initial_drones: list[DroneRuntimeState] | None = None,
+        initial_pending: list[Order] | None = None,
+        initial_events: list[FleetEvent] | None = None,
+        initial_next_drone_idx: int = 0,
+    ) -> None:
         self._model_name = model_name
+        if initial_drones is not None:
+            self._drones = {d.id: d for d in initial_drones}
+        if initial_pending is not None:
+            self._pending = deque(initial_pending)
+        if initial_events is not None:
+            self._events = deque(initial_events, maxlen=MAX_EVENTS)
+        self._next_drone_idx = initial_next_drone_idx
         workflow.logger.info("FleetWorkflow started")
         while not self._shutdown:
+            if (
+                not self._pending
+                and workflow.info().get_current_history_length() > _HISTORY_THRESHOLD
+            ):
+                workflow.continue_as_new(
+                    args=[
+                        self._model_name,
+                        [self._drones[d_id] for d_id in self._drone_order],
+                        list(self._pending),
+                        list(self._events),
+                        self._next_drone_idx,
+                    ],
+                )
             await workflow.wait_condition(lambda: bool(self._pending) or self._shutdown)
             if self._shutdown:
                 return

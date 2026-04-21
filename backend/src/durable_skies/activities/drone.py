@@ -16,9 +16,9 @@ from .drone_signal import advance_leg, update_drone
 from .fleet_signal import append_event
 from .world import resolve_location, resolve_name
 
-_NAV_STEPS = 24
-_NAV_STEP_DELAY_S = 0.5
-_BATTERY_PER_STEP = 0.5
+_NAV_STEPS = 6
+_NAV_STEP_DELAY_S = 2.0
+_BATTERY_PER_STEP = 2.0
 _BATTERY_CRITICAL_PCT = 25.0
 
 

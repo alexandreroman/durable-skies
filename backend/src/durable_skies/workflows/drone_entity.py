@@ -26,6 +26,8 @@ from ..models import (
 )
 from .delivery import DeliveryWorkflow
 
+_HISTORY_THRESHOLD = 2000
+
 
 def _build_flight_plan(order: Order, home_base_id: str) -> FlightPlan:
     legs = [
@@ -139,6 +141,18 @@ class DroneWorkflow:
             if self._home_location is not None:
                 self._position = self._home_location.model_copy()
             await self._sync_to_fleet()
+
+            if workflow.info().get_current_history_length() > _HISTORY_THRESHOLD:
+                workflow.continue_as_new(
+                    args=[
+                        drone_id,
+                        name,
+                        home_base_id,
+                        home_location,
+                        fleet_workflow_id,
+                        model_name,
+                    ],
+                )
 
     @workflow.signal
     def assign_order(self, order: Order) -> None:
