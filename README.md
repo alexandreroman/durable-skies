@@ -102,7 +102,6 @@ required.
 | `ANTHROPIC_MODEL`    | Claude model (LiteLLM-style identifier) | `anthropic/claude-sonnet-4-6` |
 | `API_HOST`           | FastAPI bind address                    | `0.0.0.0`                     |
 | `API_PORT`           | FastAPI listen port                     | `8000`                        |
-| `FLEET_SIZE`         | Number of drones in the demo fleet      | `6`                           |
 
 The Nuxt frontend reads `NUXT_PUBLIC_API_BASE` (default
 `http://localhost:8000`); set it if you serve the API

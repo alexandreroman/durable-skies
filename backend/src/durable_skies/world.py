@@ -23,14 +23,12 @@ DELIVERY_POINTS: list[DeliveryPoint] = [
     DeliveryPoint(id="dp-8", name="DP-8", location=Coordinate(lat=48.848, lon=2.426)),
 ]
 
-# 6 drones, 2 per depot, NATO-phonetic names.
+# 4 drones across 3 depots, NATO-phonetic names.
 _DRONE_ASSIGNMENTS: tuple[tuple[str, str], ...] = (
     ("Alpha", "base-north"),
     ("Bravo", "base-north"),
     ("Charlie", "base-south"),
-    ("Delta", "base-south"),
     ("Echo", "base-east"),
-    ("Foxtrot", "base-east"),
 )
 
 
