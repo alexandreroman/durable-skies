@@ -26,8 +26,6 @@ durable-skies-api = "durable_skies.api.server:main"
 [dependency-groups]
 dev = [
     "ruff>=0.8.0",
-    "pytest>=8.3.0",
-    "pytest-asyncio>=0.24.0",
     "watchfiles>=0.24.0",
 ]
 
@@ -41,7 +39,4 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
 

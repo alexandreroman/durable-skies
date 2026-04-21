@@ -97,7 +97,6 @@ class Order(BaseModel):
     payload_kg: float
     created_at: datetime
     status: OrderStatus = OrderStatus.PENDING
-    assigned_drone_id: str | None = None
 
 
 class FleetEventType(StrEnum):

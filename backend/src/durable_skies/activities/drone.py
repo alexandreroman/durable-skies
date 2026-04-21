@@ -157,13 +157,12 @@ async def dropoff_package(
     fleet_workflow_id: str,
 ) -> str:
     activity.logger.info("Drone %s delivering order %s at %s", drone_id, order_id, dropoff_point_id)
-    await update_drone(drone_workflow_id, state=WorkflowState.DELIVERING)
+    await update_drone(drone_workflow_id, state=WorkflowState.DELIVERING, add_signal="delivered")
     await append_event(
         fleet_workflow_id,
         f"✅ {drone_id} delivered",
         FleetEventType.SUCCESS,
     )
     await asyncio.sleep(1.0)
-    await update_drone(drone_workflow_id, add_signal="delivered")
     await advance_leg(drone_workflow_id)
     return f"Order {order_id} delivered at {dropoff_point_id}"

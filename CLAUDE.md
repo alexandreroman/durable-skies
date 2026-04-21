@@ -16,8 +16,8 @@ See [README.md](README.md) for full documentation.
 ## Build & run
 
 ```bash
-make install
-make temporal-up
+make -C backend install
+make infra-up
 make worker     # in terminal 1
 make api        # in terminal 2
 make ui         # in terminal 3

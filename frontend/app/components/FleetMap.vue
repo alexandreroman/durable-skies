@@ -14,10 +14,7 @@ const emit = defineEmits<{ select: [id: string | null] }>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 
-// Client-side tween state. The backend's position-update cadence is not known
-// upfront and may vary, so we track each drone's observed inter-update interval
-// with an EWMA and tween over ~that interval — this avoids the freeze-then-slide
-// artifact that a fixed, too-short duration produces between polls.
+// Tween each drone toward its last /fleet position over the observed inter-update interval.
 const TWEEN_DURATION_MS_DEFAULT = 2000;
 const TWEEN_SAFETY_FACTOR = 1.15;
 const TWEEN_INTERVAL_ALPHA = 0.35;
@@ -42,7 +39,6 @@ function tweenProgress(entry: TweenEntry, now: number): number {
 function renderedPosition(droneId: string, now: number): { lat: number; lon: number } {
   const entry = tweens.get(droneId);
   if (!entry) {
-    // Defensive fallback: the watcher should have populated the map already.
     const drone = props.drones.find((d) => d.id === droneId);
     return drone ? { lat: drone.position.lat, lon: drone.position.lon } : { lat: 0, lon: 0 };
   }
@@ -100,16 +96,6 @@ const legendStates = Object.entries(WORKFLOW_STATES).filter(([k]) => k !== "IDLE
   [string, (typeof WORKFLOW_STATES)[keyof typeof WORKFLOW_STATES]]
 >;
 
-const STATE_STROKE: Record<string, string> = {
-  IN_FLIGHT: "#41D1FF",
-  RETURNING: "#7C5CFF",
-  DELIVERING: "#00D4A0",
-  INCIDENT: "#FF6B6B",
-  DISPATCHED: "#FFB547",
-};
-
-const INCIDENT_STROKE = "#FF6B6B";
-
 interface RenderedLeg {
   fromLat: number;
   fromLon: number;
@@ -144,9 +130,7 @@ function legsToRender(
   return out;
 }
 
-// Cached CSS-pixel size of the canvas and current device pixel ratio.
-// Updated by the ResizeObserver and the DPR matchMedia listener so the
-// rAF draw loop doesn't need to hit the DOM on every frame.
+// Cached canvas size (CSS pixels) and DPR — updated by observers so draw() skips the DOM.
 let rectW = 0;
 let rectH = 0;
 let dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
@@ -250,14 +234,14 @@ function draw(): void {
     const rendered = renderedPosition(drone.id, now);
     const pos = latLngToXY(rendered.lat, rendered.lon, W, H);
 
-    const lineColor = STATE_STROKE[drone.state] ?? "#5A5D82";
+    const lineColor = WORKFLOW_STATES[drone.state]?.color ?? "#5A5D82";
 
     if (props.selectedDrone === drone.id) {
       for (const leg of legsToRender(drone, findPointCoord)) {
         const a = latLngToXY(leg.fromLat, leg.fromLon, W, H);
         const b = latLngToXY(leg.toLat, leg.toLon, W, H);
         const isDivert = leg.kind === "divert_to_base";
-        const baseColor = isDivert ? INCIDENT_STROKE : lineColor;
+        const baseColor = isDivert ? WORKFLOW_STATES.INCIDENT.color : lineColor;
 
         ctx.beginPath();
         if (leg.status === "done") {
@@ -327,8 +311,7 @@ function animate(): void {
 function handleDprChange(): void {
   dpr = window.devicePixelRatio || 1;
   syncCanvasSize();
-  // Re-subscribe: matchMedia queries are DPR-specific, so a new one is
-  // needed after the ratio changes (e.g. dragging to an external monitor).
+  // Re-subscribe: matchMedia is DPR-specific.
   if (dprMedia) dprMedia.removeEventListener("change", handleDprChange);
   dprMedia = window.matchMedia(`(resolution: ${dpr}dppx)`);
   dprMedia.addEventListener("change", handleDprChange);

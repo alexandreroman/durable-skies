@@ -34,6 +34,16 @@ class OrderWorkflow:
         }
 
     @workflow.signal
+    def mark_assigned(self) -> None:
+        if self._status == OrderStatus.PENDING:
+            self._status = OrderStatus.ASSIGNED
+
+    @workflow.signal
+    def mark_in_progress(self) -> None:
+        if self._status in (OrderStatus.PENDING, OrderStatus.ASSIGNED):
+            self._status = OrderStatus.IN_PROGRESS
+
+    @workflow.signal
     def delivery_done(self, success: bool, message: str) -> None:
         self._success = success
         self._message = message

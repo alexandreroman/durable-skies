@@ -78,8 +78,7 @@ curl -X POST http://localhost:8000/orders \
     "dropoff_point_id": "dp-1",
     "payload_kg": 1.2,
     "created_at": "2026-04-21T10:00:00Z",
-    "status": "pending",
-    "assigned_drone_id": null
+    "status": "pending"
   }'
 ```
 

@@ -52,8 +52,6 @@ export function useFleet() {
       dropoff_point_id: dropoff?.id ?? "dp-1",
       payload_kg: 1.2,
       created_at: new Date().toISOString(),
-      status: "pending",
-      assigned_drone_id: null,
     };
 
     try {

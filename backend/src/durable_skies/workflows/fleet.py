@@ -22,7 +22,7 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from ..agents import DISPATCH_DECISION_KEY, build_dispatcher_agent
 
-from .. import drone_workflow_id
+from .. import drone_workflow_id, order_workflow_id
 from ..models import (
     Coordinate,
     DroneRuntimeState,
@@ -94,7 +94,8 @@ class FleetWorkflow:
             idle_drones = [d for d in self._drones.values() if d.state == WorkflowState.IDLE]
             if not idle_drones:
                 await workflow.wait_condition(
-                    lambda: self._has_idle_drone() or self._shutdown
+                    lambda: any(d.state == WorkflowState.IDLE for d in self._drones.values())
+                    or self._shutdown
                 )
                 continue
 
@@ -108,20 +109,17 @@ class FleetWorkflow:
             if drone_id is None:
                 continue
 
-            # Keep the order visible in the queue during the dispatcher run so the UI chip doesn't flicker off.
+            # Pop after the dispatcher picks so the UI queue chip stays stable during the agent run.
             self._pending.popleft()
             drone = self._drones[drone_id]
-            # Optimistically mark the drone as dispatched so the next iteration
-            # of the loop doesn't pick it again before the entity has signaled
-            # its own state change back.
             drone.state = WorkflowState.DISPATCHED
             drone.current_order_id = order.id
             self._append_event(FleetEventType.SIGNAL, f"📦 {drone.name} dispatched")
 
-            # Hand the order off to the drone entity. The entity runs the
-            # DeliveryWorkflow as a child and signals back with state updates.
             drone_handle = workflow.get_external_workflow_handle(drone_workflow_id(drone_id))
             await drone_handle.signal("assign_order", order)
+            order_handle = workflow.get_external_workflow_handle(order_workflow_id(order.id))
+            await order_handle.signal("mark_assigned")
 
     async def _dispatch_with_agent(
         self,
@@ -226,12 +224,6 @@ class FleetWorkflow:
         if "flight_plan" in update:
             fp = update["flight_plan"]
             drone.flight_plan = FlightPlan.model_validate(fp) if fp else None
-        if update.get("clear_signals"):
-            drone.signals = []
-        if update.get("add_signal"):
-            sig = update["add_signal"]
-            if sig not in drone.signals:
-                drone.signals = [*drone.signals, sig]
         if "signals" in update and update["signals"] is not None:
             drone.signals = list(update["signals"])
 
@@ -258,9 +250,6 @@ class FleetWorkflow:
                 message=message,
             )
         )
-
-    def _has_idle_drone(self) -> bool:
-        return any(d.state == WorkflowState.IDLE for d in self._drones.values())
 
     def _pick_idle_drone(self) -> str | None:
         n = len(self._drone_order)

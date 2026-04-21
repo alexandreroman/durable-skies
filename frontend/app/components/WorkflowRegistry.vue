@@ -3,8 +3,6 @@ import { computed } from "vue";
 import type { Base, Drone, FlightLegKind } from "../types/fleet";
 import { SIGNAL_COLORS, WORKFLOW_STATES } from "../composables/fleetConstants";
 
-const INCIDENT_COLOR = "#FF6B6B";
-
 const LEG_LABELS: Record<FlightLegKind, string> = {
   takeoff: "Takeoff",
   to_pickup: "→ Pickup",
@@ -197,15 +195,15 @@ function orderLabel(orderId: string): string {
                     ? {
                         background:
                           leg.kind === 'divert_to_base'
-                            ? INCIDENT_COLOR
+                            ? WORKFLOW_STATES.INCIDENT.color
                             : WORKFLOW_STATES[drone.state].color,
                         borderColor:
                           leg.kind === 'divert_to_base'
-                            ? INCIDENT_COLOR
+                            ? WORKFLOW_STATES.INCIDENT.color
                             : WORKFLOW_STATES[drone.state].color,
                       }
                     : leg.kind === 'divert_to_base'
-                      ? { borderColor: INCIDENT_COLOR, color: INCIDENT_COLOR }
+                      ? { borderColor: WORKFLOW_STATES.INCIDENT.color, color: WORKFLOW_STATES.INCIDENT.color }
                       : {}
                 "
                 :title="LEG_LABELS[leg.kind]"

@@ -32,10 +32,6 @@ lint: ## Run linter
 format: ## Format code
 	uv run ruff format .
 
-.PHONY: test
-test: ## Run tests
-	uv run pytest
-
 ##@ Helpers
 
 .PHONY: help

@@ -61,7 +61,6 @@ export interface Drone {
   workflow_id: string | null;
   current_order_id: string | null;
   signals: string[];
-  target_point_id: string | null;
   flight_plan: FlightPlan | null;
 }
 

@@ -108,10 +108,7 @@ class DroneWorkflow:
             self._target_point_id = self._flight_plan.legs[0].to_point_id
             await self._sync_to_fleet()
 
-            # DeliveryWorkflow runs its own compensation + finalize path on
-            # failure and signals us back to IDLE, so we just need to wait out
-            # the child — any ChildWorkflowError means the compensation ran and
-            # there is nothing else to clean up here.
+            # DeliveryWorkflow runs its own compensation saga; we only wait it out.
             with contextlib.suppress(ChildWorkflowError):
                 await workflow.execute_child_workflow(
                     DeliveryWorkflow.run,
@@ -128,9 +125,6 @@ class DroneWorkflow:
                     task_queue=TASK_QUEUE,
                 )
 
-            # Reset for next order. DeliveryWorkflow has already signaled the
-            # final IDLE/battery state; these assignments keep in-process
-            # fields coherent for the next loop iteration.
             self._current_order = None
             self._current_delivery_workflow_id = None
             self._flight_plan = None
@@ -176,10 +170,7 @@ class DroneWorkflow:
             sig = update["add_signal"]
             if sig not in self._signals:
                 self._signals = [*self._signals, sig]
-        # Position/battery now flow via Redis telemetry; this signal only
-        # carries checkpoint resets (mission end, recharge) and state
-        # transitions driven by DeliveryWorkflow. Sync to fleet only when the
-        # state enum moves so the dispatcher's idle detection stays correct.
+        # Only sync when the state enum moves — dispatcher idle-detection depends on it.
         if self._state != prev_state:
             await self._sync_to_fleet()
 

@@ -22,14 +22,8 @@ from .workflows import all_workflows
 
 log = logging.getLogger("durable_skies.worker")
 
-# pydantic v2 imports its compiled core (`pydantic_core`, `pydantic_core._pydantic_core`,
-# `pydantic_core.core_schema`) lazily on first validation. That first call happens
-# *inside* a workflow task, after the sandbox has snapshotted its module table, which
-# triggers "imported after initial workflow load" warnings. Marking the package as
-# passthrough lets the sandbox import it freely without tracking — safe because it's
-# a pure C/Python extension with no nondeterminism risk. The `GoogleAdkPlugin`'s
-# `workflow_runner` hook will layer its own passthrough modules (google.adk, google.genai,
-# mcp) on top of this runner, so both sets are preserved.
+# pydantic_core is a pure C extension imported lazily on first validation;
+# mark it as sandbox passthrough so the first call inside a workflow doesn't warn.
 _workflow_runner = SandboxedWorkflowRunner(
     restrictions=SandboxRestrictions.default.with_passthrough_modules("pydantic_core"),
 )

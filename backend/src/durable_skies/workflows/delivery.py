@@ -67,6 +67,8 @@ class DeliveryWorkflow:
                 start_to_close_timeout=short,
                 retry_policy=fast_retry,
             )
+            order_handle = workflow.get_external_workflow_handle(order_workflow_id(order.id))
+            await order_handle.signal("mark_in_progress")
             battery = await workflow.execute_activity(
                 navigate_drone,
                 args=[
@@ -211,148 +213,84 @@ class DeliveryWorkflow:
         order: Order,
     ) -> None:
         if action == ACTION_ABORT:
-            await self._recover_abort(drone_handle, fleet_handle, drone_id, home_base_id)
+            await self._emit_rtb(drone_handle, fleet_handle, drone_id, home_base_id, f"↩️ {drone_id} RTB")
         elif action == ACTION_EMERGENCY_LAND:
-            nearest_id, nearest_name = self._nearest_base(order, home_base_id)
-            await self._recover_emergency_land(drone_handle, fleet_handle, drone_id, nearest_id, nearest_name)
+            nearest_id, nearest_name = self._nearest_base(order)
+            await self._emit_rtb(
+                drone_handle, fleet_handle, drone_id, nearest_id,
+                f"🛬 {drone_id} emergency landing at {nearest_name}",
+            )
         elif action == ACTION_DIVERT_RECHARGE:
-            nearest_id, nearest_name = self._nearest_base(order, home_base_id)
-            await self._recover_divert_recharge(drone_handle, fleet_handle, drone_id, nearest_id, nearest_name)
-        else:
-            await self._recover_abort(drone_handle, fleet_handle, drone_id, home_base_id)
+            nearest_id, nearest_name = self._nearest_base(order)
+            await self._emit_rtb(
+                drone_handle, fleet_handle, drone_id, nearest_id,
+                f"🔋 {drone_id} diverting to {nearest_name} to recharge",
+            )
+            await fleet_handle.signal(
+                "append_event",
+                FleetEvent(
+                    id=workflow.uuid4().hex,
+                    time=workflow.now().isoformat(),
+                    type=FleetEventType.INFO,
+                    message=f"⚡ {drone_id} recharged at {nearest_name}",
+                ),
+            )
+            await drone_handle.signal("update_runtime", {"battery_pct": 100.0})
+            await workflow.sleep(timedelta(seconds=1))
+            await fleet_handle.signal(
+                "append_event",
+                FleetEvent(
+                    id=workflow.uuid4().hex,
+                    time=workflow.now().isoformat(),
+                    type=FleetEventType.SIGNAL,
+                    message=f"↩️ {drone_id} returning home",
+                ),
+            )
 
-    async def _recover_abort(self, drone_handle, fleet_handle, drone_id: str, home_base_id: str) -> None:
-        await drone_handle.signal("low_battery")
-        await fleet_handle.signal(
-            "append_event",
-            FleetEvent(
-                id=workflow.uuid4().hex,
-                time=workflow.now().isoformat(),
-                type=FleetEventType.SIGNAL,
-                message=f"↩️ {drone_id} RTB",
-            ),
-        )
-        await drone_handle.signal(
-            "update_runtime",
-            {
-                "state": WorkflowState.RETURNING.value,
-                "target_point_id": home_base_id,
-                "add_signal": "incident",
-            },
-        )
-        await workflow.sleep(timedelta(seconds=2))
-
-    async def _recover_emergency_land(
+    async def _emit_rtb(
         self,
         drone_handle,
         fleet_handle,
         drone_id: str,
-        nearest_base_id: str,
-        nearest_base_name: str,
+        target_base_id: str,
+        event_message: str,
+        event_type: FleetEventType = FleetEventType.SIGNAL,
     ) -> None:
-        # NOTE: _finalize still teleports the drone to its home base at the end;
-        # tracking a distinct "landed-away" state is a future enhancement.
         await drone_handle.signal("low_battery")
         await fleet_handle.signal(
             "append_event",
             FleetEvent(
                 id=workflow.uuid4().hex,
                 time=workflow.now().isoformat(),
-                type=FleetEventType.SIGNAL,
-                message=f"🛬 {drone_id} emergency landing at {nearest_base_name}",
+                type=event_type,
+                message=event_message,
             ),
         )
         await drone_handle.signal(
             "update_runtime",
             {
                 "state": WorkflowState.RETURNING.value,
-                "target_point_id": nearest_base_id,
+                "target_point_id": target_base_id,
                 "add_signal": "incident",
             },
         )
         await workflow.sleep(timedelta(seconds=2))
 
-    async def _recover_divert_recharge(
-        self,
-        drone_handle,
-        fleet_handle,
-        drone_id: str,
-        nearest_base_id: str,
-        nearest_base_name: str,
-    ) -> None:
-        # NOTE: the order still fails in this version; resuming the mission
-        # after a recharge is a future enhancement.
-        await drone_handle.signal("low_battery")
-        await fleet_handle.signal(
-            "append_event",
-            FleetEvent(
-                id=workflow.uuid4().hex,
-                time=workflow.now().isoformat(),
-                type=FleetEventType.SIGNAL,
-                message=f"🔋 {drone_id} diverting to {nearest_base_name} to recharge",
-            ),
-        )
-        await drone_handle.signal(
-            "update_runtime",
-            {
-                "state": WorkflowState.RETURNING.value,
-                "target_point_id": nearest_base_id,
-                "add_signal": "incident",
-            },
-        )
-        await workflow.sleep(timedelta(seconds=2))
-        await fleet_handle.signal(
-            "append_event",
-            FleetEvent(
-                id=workflow.uuid4().hex,
-                time=workflow.now().isoformat(),
-                type=FleetEventType.INFO,
-                message=f"⚡ {drone_id} recharged at {nearest_base_name}",
-            ),
-        )
-        await drone_handle.signal("update_runtime", {"battery_pct": 100.0})
-        await workflow.sleep(timedelta(seconds=1))
-        await fleet_handle.signal(
-            "append_event",
-            FleetEvent(
-                id=workflow.uuid4().hex,
-                time=workflow.now().isoformat(),
-                type=FleetEventType.SIGNAL,
-                message=f"↩️ {drone_id} returning home",
-            ),
-        )
-
-    def _nearest_base(self, order: Order, home_base_id: str) -> tuple[str, str]:
+    def _nearest_base(self, order: Order) -> tuple[str, str]:
         """Pragmatic proxy for the drone's last-known position.
 
         DeliveryWorkflow does not track the drone's live position (that lives
         in DroneWorkflow and would require a query-through-activity to read
         deterministically). Since incidents most commonly happen mid-flight
         toward the dropoff, we use the dropoff point as the proxy location.
-        Falls back to home_base_id if anything goes wrong.
         """
-        try:
-            dropoff = next(dp for dp in DELIVERY_POINTS if dp.id == order.dropoff_point_id)
-            ref_lat = dropoff.location.lat
-            ref_lon = dropoff.location.lon
-        except StopIteration:
-            # Dropoff might itself be a base (tests/future shapes); look there too.
-            try:
-                base = next(b for b in DEPOTS if b.id == order.dropoff_point_id)
-                ref_lat = base.location.lat
-                ref_lon = base.location.lon
-            except StopIteration:
-                home = next((b for b in DEPOTS if b.id == home_base_id), None)
-                return (home_base_id, home.name if home else home_base_id)
-
+        dropoff = next(dp for dp in DELIVERY_POINTS if dp.id == order.dropoff_point_id)
+        ref_lat = dropoff.location.lat
+        ref_lon = dropoff.location.lon
         nearest = min(
             DEPOTS,
             key=lambda b: math.hypot(b.location.lat - ref_lat, b.location.lon - ref_lon),
-            default=None,
         )
-        if nearest is None:
-            home = next((b for b in DEPOTS if b.id == home_base_id), None)
-            return (home_base_id, home.name if home else home_base_id)
         return (nearest.id, nearest.name)
 
     async def _finalize(
