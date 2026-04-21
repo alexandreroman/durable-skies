@@ -55,7 +55,7 @@ function orderLabel(orderId: string): string {
       </span>
     </div>
 
-    <div class="flex-1 overflow-y-auto">
+    <div class="flex-1 min-h-0 overflow-y-auto">
       <div
         v-for="drone in drones"
         :key="drone.id"

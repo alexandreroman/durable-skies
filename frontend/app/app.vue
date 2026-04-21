@@ -58,13 +58,14 @@ const { drones, bases, deliveryPoints, events, selectedDrone, selectDrone, submi
       />
       <div class="ds-right-rail flex flex-col">
         <WorkflowRegistry
+          class="flex-1 min-h-0"
           :drones="drones"
           :bases="bases"
           :delivery-points="deliveryPoints"
           :selected-drone="selectedDrone"
           @select="(id) => selectDrone(id)"
         />
-        <EventLog class="flex-1 min-h-0" :events="events" />
+        <EventLog class="max-h-[200px]" :events="events" />
       </div>
     </div>
   </div>
