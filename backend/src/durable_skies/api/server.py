@@ -23,12 +23,13 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
 from .. import TASK_QUEUE, drone_workflow_id, order_workflow_id
+from ..availability import close_availability_client
 from ..config import get_settings
 from ..events import close_events_client, read_fleet_events
-from ..models import Coordinate, DroneRuntimeState, FleetState, Order
+from ..models import Coordinate, DroneRuntimeState, FleetState, Order, WorkflowState
 from ..telemetry import close_telemetry_client, read_drone_telemetries
 from ..workflows import DroneWorkflow, FleetWorkflow, OrderWorkflow
-from ..world import initial_drone_startups
+from ..world import initial_drone_startups, initial_drones
 
 FLEET_WORKFLOW_ID = "fleet-supervisor"
 
@@ -49,7 +50,7 @@ async def lifespan(app: FastAPI):
     try:
         await client.start_workflow(
             FleetWorkflow.run,
-            args=[settings.anthropic_model, None, None, 0, settings.anthropic_fast_model],
+            args=[settings.anthropic_model, None, settings.anthropic_fast_model],
             id=FLEET_WORKFLOW_ID,
             task_queue=TASK_QUEUE,
         )
@@ -69,7 +70,6 @@ async def lifespan(app: FastAPI):
                     name,
                     home_base_id,
                     home_location,
-                    FLEET_WORKFLOW_ID,
                     settings.anthropic_model,
                 ],
                 id=wf_id,
@@ -84,6 +84,7 @@ async def lifespan(app: FastAPI):
     finally:
         await close_telemetry_client()
         await close_events_client()
+        await close_availability_client()
 
 
 app = FastAPI(title="durable-skies", lifespan=lifespan)
@@ -106,8 +107,8 @@ async def _query_drone(client: Client, drone_id: str) -> DroneRuntimeState | Non
     Silently downgrades any per-drone query failure — timeout, RPC failure
     (worker unreachable, task in failed state), or query-handler exception
     (e.g. replay non-determinism) — to None so one unresponsive drone doesn't
-    take down the whole /fleet response. The caller falls back to fleet's
-    cached snapshot for that drone.
+    take down the whole /fleet response. The caller falls back to the baseline
+    snapshot for that drone.
     """
     handle = client.get_workflow_handle(drone_workflow_id(drone_id))
     try:
@@ -135,17 +136,21 @@ def _overlay_telemetry(drone: DroneRuntimeState, telemetry: dict | None) -> Dron
     return drone.model_copy(update=update) if update else drone
 
 
+_MIN_DISPATCH_BATTERY_PCT = 40.0
+
+
 @app.get("/fleet", response_model=FleetState)
 async def get_fleet() -> FleetState:
     client: Client = app.state.client
     fleet_handle = client.get_workflow_handle(FLEET_WORKFLOW_ID)
 
     # Queries need a live worker; cap the wait so a worker restart doesn't freeze the UI poll loop.
-    # The fleet query is authoritative for bases/pending_orders_count and business-state fields
-    # (state enum, signals, flight_plan). Per-drone queries pull flight_plan + business state;
-    # Redis telemetry provides live position/battery on top; the fleet event log comes from Redis
-    # as well. Fire everything in parallel.
-    drone_ids = [drone_id for drone_id, _name, _base_id, _loc in initial_drone_startups()]
+    # The fleet query is authoritative for bases/pending_orders_count and the dispatching flag;
+    # per-drone queries provide business state (state enum, signals, flight_plan, current_order_id);
+    # Redis telemetry provides live position/battery on top; the fleet event log comes from Redis.
+    # Fire everything in parallel.
+    baseline_drones = {d.id: d for d in initial_drones()}
+    drone_ids = list(baseline_drones.keys())
     fleet_task = asyncio.create_task(asyncio.wait_for(fleet_handle.query(FleetWorkflow.get_fleet_state), timeout=2.0))
     drone_tasks: dict[str, asyncio.Task[DroneRuntimeState | None]] = {
         drone_id: asyncio.create_task(_query_drone(client, drone_id)) for drone_id in drone_ids
@@ -171,11 +176,21 @@ async def get_fleet() -> FleetState:
 
     await asyncio.gather(*drone_tasks.values(), telemetry_task, events_task)
     telemetries = telemetry_task.result()
-    merged = [
-        _overlay_telemetry(drone_tasks[d.id].result() or d, telemetries.get(d.id)) if d.id in drone_tasks else d
-        for d in fleet_state.drones
-    ]
-    return fleet_state.model_copy(update={"drones": merged, "events": events_task.result()})
+
+    merged: list[DroneRuntimeState] = []
+    for drone_id in drone_ids:
+        base = baseline_drones[drone_id]
+        queried = drone_tasks[drone_id].result() or base
+        merged.append(_overlay_telemetry(queried, telemetries.get(drone_id)))
+
+    dispatchable = sum(1 for d in merged if d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT)
+    return fleet_state.model_copy(
+        update={
+            "drones": merged,
+            "events": events_task.result(),
+            "dispatchable_drones_count": dispatchable,
+        }
+    )
 
 
 @app.post("/orders")

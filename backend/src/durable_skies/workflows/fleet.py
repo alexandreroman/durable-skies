@@ -1,24 +1,23 @@
 """Fleet workflow: long-running supervisor for the drone fleet.
 
-Owns the aggregated runtime snapshot of drones, exposes it to the FastAPI
-layer through a query, and routes every incoming order to a per-drone entity
-workflow (`DroneWorkflow`). Entities signal back with drone updates. The
-fleet stays the single source of truth for business state while remaining a
-thin aggregator.
+Accepts orders and routes each to a per-drone entity workflow (`DroneWorkflow`).
+The fleet no longer maintains any drone registry of its own — it reads a fresh
+availability snapshot from Redis (`fleet:availability`, written by each
+`DroneWorkflow` on state transitions) at every dispatch cycle. This makes the
+fleet quasi-stateless w.r.t. drones and keeps its event history small.
 
 The fleet event log (takeoff/pickup/incident notifications) is written to
-Redis through the `log_fleet_event` local activity — it is pure observability
-and does not belong in workflow history. See `..events`.
+Redis through the `log_fleet_event` local activity — see `..events`.
 
 Order-to-drone assignment is delegated to an ADK dispatcher agent (see
-`..agents.dispatcher`). A round-robin picker is kept as a deterministic
+`..agents.dispatcher`). A round-robin picker — rebuilt from the sorted list
+of drone ids returned by Redis at each dispatch — is the deterministic
 fallback when the agent fails or returns an invalid choice.
 """
 
 import json
 from collections import deque
 from datetime import timedelta
-from typing import Any
 
 from google.adk.runners import InMemoryRunner
 from google.genai import types
@@ -28,64 +27,51 @@ with workflow.unsafe.imports_passed_through():
     from ..agents import DISPATCH_DECISION_KEY, build_dispatcher_agent
 
 from .. import drone_workflow_id, order_workflow_id
-from ..activities import log_fleet_event
+from ..activities import log_fleet_event, read_drone_availabilities_activity
 from ..models import (
-    Coordinate,
-    DroneRuntimeState,
+    DroneAvailability,
     FleetEvent,
     FleetEventType,
     FleetState,
-    FlightPlan,
     Order,
     WorkflowState,
 )
-from ..world import DELIVERY_POINTS, DEPOTS, initial_drones
+from ..world import DELIVERY_POINTS, DEPOTS
 
 _HISTORY_THRESHOLD = 2000
 _MIN_DISPATCH_BATTERY_PCT = 40.0
 _LOG_EVENT_TIMEOUT = timedelta(seconds=5)
+_READ_AVAILABILITY_TIMEOUT = timedelta(seconds=5)
 
 
 @workflow.defn
 class FleetWorkflow:
     def __init__(self) -> None:
-        self._drones: dict[str, DroneRuntimeState] = {d.id: d for d in initial_drones()}
-        self._drone_order: list[str] = sorted(self._drones.keys())
         self._pending: deque[Order] = deque()
-        self._next_drone_idx = 0
         self._shutdown = False
         self._model_name: str | None = None
         self._fast_model_name: str | None = None
         self._dispatching: bool = False
+        self._waiting_for_drone: bool = False
 
     @workflow.run
     async def run(
         self,
         model_name: str,
-        initial_drones: list[DroneRuntimeState] | None = None,
         initial_pending: list[Order] | None = None,
-        initial_next_drone_idx: int = 0,
         fast_model_name: str | None = None,
     ) -> None:
         self._model_name = model_name
         self._fast_model_name = fast_model_name
-        if initial_drones is not None:
-            self._drones = {d.id: d for d in initial_drones}
         if initial_pending is not None:
             self._pending = deque(initial_pending)
-        self._next_drone_idx = initial_next_drone_idx
         workflow.logger.info("FleetWorkflow started")
         while not self._shutdown:
-            if (
-                not self._pending
-                and workflow.info().get_current_history_length() > _HISTORY_THRESHOLD
-            ):
+            if not self._pending and workflow.info().get_current_history_length() > _HISTORY_THRESHOLD:
                 workflow.continue_as_new(
                     args=[
                         self._model_name,
-                        [self._drones[d_id] for d_id in self._drone_order],
                         list(self._pending),
-                        self._next_drone_idx,
                         self._fast_model_name,
                     ],
                 )
@@ -94,45 +80,55 @@ class FleetWorkflow:
                 return
 
             order = self._pending[0]
-            idle_drones = [d for d in self._drones.values() if self._is_dispatchable(d)]
-            if not idle_drones:
-                await workflow.wait_condition(
-                    lambda: any(self._is_dispatchable(d) for d in self._drones.values())
-                    or self._shutdown
-                )
+            availabilities = await self._read_availabilities()
+            dispatchable = [a for a in availabilities if self._is_dispatchable(a)]
+            if not dispatchable:
+                # Redis empty or no candidates: poll quietly and retry. We can't
+                # await a fleet-wide "drone became idle" signal anymore (no local
+                # registry), so the dispatcher polls Redis on a sleep timer. The
+                # order stays on the pending queue the whole time.
+                if not self._waiting_for_drone:
+                    await self._log_event(
+                        "⌛ Dispatcher waiting: no available drone",
+                        FleetEventType.INFO,
+                    )
+                    self._waiting_for_drone = True
+                await workflow.sleep(timedelta(seconds=2))
                 continue
+            self._waiting_for_drone = False
 
             # Flag is scoped tightly around the LLM call so the UI only flashes during real agent latency.
             self._dispatching = True
             try:
-                drone_id = await self._dispatch_with_agent(order, idle_drones)
+                drone_id = await self._dispatch_with_agent(order, dispatchable)
             finally:
                 self._dispatching = False
-            if (
-                drone_id is None
-                or drone_id not in self._drones
-                or self._drones[drone_id].state != WorkflowState.IDLE
-            ):
-                drone_id = self._pick_idle_drone()
+            if drone_id is None or not any(a.drone_id == drone_id for a in dispatchable):
+                drone_id = self._pick_idle_drone(dispatchable)
             if drone_id is None:
                 continue
 
             # Pop after the dispatcher picks so the UI queue chip stays stable during the agent run.
             self._pending.popleft()
-            drone = self._drones[drone_id]
-            drone.state = WorkflowState.DISPATCHED
-            drone.current_order_id = order.id
-            await self._log_event(f"📦 {drone.name} dispatched", FleetEventType.SIGNAL)
+            drone_name = next(a.name for a in dispatchable if a.drone_id == drone_id)
+            await self._log_event(f"📦 {drone_name} dispatched", FleetEventType.SIGNAL)
 
             drone_handle = workflow.get_external_workflow_handle(drone_workflow_id(drone_id))
             await drone_handle.signal("assign_order", order)
             order_handle = workflow.get_external_workflow_handle(order_workflow_id(order.id))
             await order_handle.signal("mark_assigned")
 
+    async def _read_availabilities(self) -> list[DroneAvailability]:
+        """Pull the fresh availability registry from Redis via a local activity."""
+        return await workflow.execute_local_activity(
+            read_drone_availabilities_activity,
+            start_to_close_timeout=_READ_AVAILABILITY_TIMEOUT,
+        )
+
     async def _dispatch_with_agent(
         self,
         order: Order,
-        idle_drones: list[DroneRuntimeState],
+        dispatchable: list[DroneAvailability],
     ) -> str | None:
         """Ask the dispatcher agent to pick an idle drone; None means fall back."""
         if self._model_name is None:
@@ -155,13 +151,12 @@ class FleetWorkflow:
                 },
                 "idle_drones": [
                     {
-                        "id": d.id,
-                        "name": d.name,
-                        "home_base_id": d.home_base_id,
-                        "battery_pct": d.battery_pct,
-                        "position": {"lat": d.position.lat, "lon": d.position.lon},
+                        "id": a.drone_id,
+                        "name": a.name,
+                        "home_base_id": a.home_base_id,
+                        "battery_pct": a.battery_pct,
                     }
-                    for d in idle_drones
+                    for a in dispatchable
                 ],
             }
             prompt = json.dumps(payload)
@@ -182,15 +177,13 @@ class FleetWorkflow:
             drone_id = decision.get("drone_id")
             reasoning = decision.get("reasoning", "")
 
-            if not drone_id or drone_id not in self._drones:
-                return None
-            if self._drones[drone_id].state != WorkflowState.IDLE:
+            chosen = next((a for a in dispatchable if a.drone_id == drone_id), None)
+            if chosen is None:
                 return None
 
-            drone_name = self._drones[drone_id].name
-            workflow.logger.info("Dispatcher picked %s: %s", drone_name, reasoning)
-            await self._log_event(f"🤖 Dispatcher → {drone_name}", FleetEventType.INFO)
-            return drone_id
+            workflow.logger.info("Dispatcher picked %s: %s", chosen.name, reasoning)
+            await self._log_event(f"🤖 Dispatcher → {chosen.name}", FleetEventType.INFO)
+            return chosen.drone_id
         except Exception as err:
             # Any failure (LLM error, sandbox hiccup, malformed decision) yields the
             # deterministic round-robin fallback so orders keep flowing.
@@ -209,44 +202,18 @@ class FleetWorkflow:
     def shutdown(self) -> None:
         self._shutdown = True
 
-    @workflow.signal
-    def update_drone(self, update: dict[str, Any]) -> None:
-        """Merge a partial drone update coming from a `DroneWorkflow`."""
-        drone_id = update.get("drone_id")
-        if not drone_id or drone_id not in self._drones:
-            return
-        drone = self._drones[drone_id]
-
-        if "state" in update:
-            drone.state = WorkflowState(update["state"])
-        if "position" in update and update["position"] is not None:
-            drone.position = Coordinate.model_validate(update["position"])
-        if "battery_pct" in update:
-            drone.battery_pct = float(update["battery_pct"])
-        if "workflow_id" in update:
-            drone.workflow_id = update["workflow_id"]
-        if "current_order_id" in update:
-            drone.current_order_id = update["current_order_id"]
-        if "target_point_id" in update:
-            drone.target_point_id = update["target_point_id"]
-        if "flight_plan" in update:
-            fp = update["flight_plan"]
-            drone.flight_plan = FlightPlan.model_validate(fp) if fp else None
-        if "signals" in update and update["signals"] is not None:
-            drone.signals = list(update["signals"])
-
     @workflow.query
     def get_fleet_state(self) -> FleetState:
-        dispatchable_drones_count = sum(1 for d in self._drones.values() if self._is_dispatchable(d))
-        # `events` is filled in by the API layer from Redis — the workflow no longer owns it.
+        # Drones are assembled by the API layer from per-drone queries; the fleet
+        # query no longer owns the registry. `events` comes from Redis too.
         return FleetState(
-            drones=[self._drones[d_id] for d_id in self._drone_order],
+            drones=[],
             bases=list(DEPOTS),
             delivery_points=list(DELIVERY_POINTS),
             events=[],
             pending_orders_count=len(self._pending),
             dispatching=self._dispatching,
-            dispatchable_drones_count=dispatchable_drones_count,
+            dispatchable_drones_count=0,
         )
 
     async def _log_event(self, message: str, event_type: FleetEventType) -> None:
@@ -263,15 +230,17 @@ class FleetWorkflow:
             start_to_close_timeout=_LOG_EVENT_TIMEOUT,
         )
 
-    def _is_dispatchable(self, d: DroneRuntimeState) -> bool:
-        return d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT
+    def _is_dispatchable(self, a: DroneAvailability) -> bool:
+        return a.state == WorkflowState.IDLE and a.battery_pct > _MIN_DISPATCH_BATTERY_PCT
 
-    def _pick_idle_drone(self) -> str | None:
-        n = len(self._drone_order)
-        for i in range(n):
-            idx = (self._next_drone_idx + i) % n
-            drone_id = self._drone_order[idx]
-            if self._is_dispatchable(self._drones[drone_id]):
-                self._next_drone_idx = (idx + 1) % n
-                return drone_id
-        return None
+    def _pick_idle_drone(self, dispatchable: list[DroneAvailability]) -> str | None:
+        """Deterministic fallback: first candidate by sorted drone_id.
+
+        The sort makes the choice reproducible under replay (Redis returns hash
+        fields in insertion order, which is not stable across rewrites). Round-
+        robin fairness is no longer threaded across deliveries — with a stateless
+        fleet it would require extra Redis state for marginal benefit.
+        """
+        if not dispatchable:
+            return None
+        return sorted(dispatchable, key=lambda a: a.drone_id)[0].drone_id

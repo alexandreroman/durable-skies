@@ -5,7 +5,11 @@ from .drone import (
     pickup_package,
     takeoff_drone,
 )
-from .fleet import log_fleet_event
+from .fleet import (
+    log_fleet_event,
+    read_drone_availabilities_activity,
+    write_drone_availability_activity,
+)
 
 all_activities = [
     takeoff_drone,
@@ -14,6 +18,8 @@ all_activities = [
     pickup_package,
     dropoff_package,
     log_fleet_event,
+    write_drone_availability_activity,
+    read_drone_availabilities_activity,
 ]
 
 __all__ = [
@@ -23,5 +29,7 @@ __all__ = [
     "log_fleet_event",
     "navigate_drone",
     "pickup_package",
+    "read_drone_availabilities_activity",
     "takeoff_drone",
+    "write_drone_availability_activity",
 ]

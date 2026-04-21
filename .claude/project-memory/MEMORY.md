@@ -16,6 +16,7 @@
 - [Battery threaded for anomaly triggering](references/battery_threading_for_anomaly.md) — DroneWorkflow passes self._battery_pct into DeliveryWorkflow so battery_critical can actually fire
 - [Long-lived workflow signature migration](references/workflow_signature_migration.md) — adding required args to FleetWorkflow/DroneWorkflow.run needs optional defaults or terminate+restart
 - [Temporal history volume invariants](references/temporal_history_volume.md) — nav cadence triplet must move together; new FleetWorkflow state must be threaded through the CAN payload
-- [Fleet push/pull split](references/fleet_push_pull_split.md) — drones push state-enum transitions only; API pulls flight_plan/state/signals from each DroneWorkflow at /fleet time
-- [Redis split: telemetry + event log](references/redis_telemetry_split.md) — position/battery (10s TTL) and fleet event log (LTRIM 200) live in Redis, not Temporal; all Redis writes must never raise
+- [Fleet push/pull split](references/fleet_push_pull_split.md) — drones push state-enum transitions to Redis availability; API pulls snapshots via DroneWorkflow queries; FleetWorkflow holds no drone registry
+- [Redis split: telemetry + events + availability](references/redis_telemetry_split.md) — position/battery (10s TTL), fleet event log (LTRIM 200), and drone availability (hash) live in Redis; all Redis writes must never raise
+- [Staleness filters anti-pattern](references/staleness_filter_antipattern.md) — do not filter Redis reads on `updated_at` when the writer only pushes on state change — they cancel out and strand the system
 - [Progressive charging + 40% dispatch gate + CHARGING state](references/progressive_charging_and_dispatch_gate.md) — battery carries via DroneWorkflow sleep loop; dispatcher filters on > 40%; at-home drones split IDLE/CHARGING

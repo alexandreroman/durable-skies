@@ -47,6 +47,39 @@ list and merges it into `GET /fleet`.
 - Activities call `write_fleet_event` directly
   (non-deterministic context, no wrapper needed).
 
+## Drone availability registry
+
+The dispatcher's drone registry is also in Redis
+now — the FleetWorkflow no longer holds
+`self._drones`. Each DroneWorkflow publishes its
+availability on every state-enum transition; the
+dispatcher reads the aggregate snapshot at
+dispatch time via a local activity.
+
+- Redis key: `fleet:availability` (Redis Hash,
+  one field per drone, keyed by drone id)
+- Value per entry: JSON-serialized
+  `DroneAvailability` `{drone_id, name,
+  home_base_id, state, battery_pct,
+  current_order_id, updated_at}`
+- Shared module: `backend/src/durable_skies/
+  availability.py`
+- Activities in `activities/fleet.py`:
+  - `write_drone_availability_activity` —
+    DroneWorkflow publishes via local activity
+    on every state-enum transition.
+  - `read_drone_availabilities_activity` —
+    FleetWorkflow reads via local activity at
+    dispatch time.
+- **No staleness filter on read.** The reader
+  returns the full hash (only corrupt entries
+  are skipped). See
+  `staleness_filter_antipattern.md` for why the
+  original 60 s filter was removed — it conflicts
+  fundamentally with the "write only on enum
+  transition" invariant and left steady-state
+  IDLE drones invisible to the dispatcher.
+
 **Why:** position/battery update every ~2 s per
 in-flight drone. Pushing each via `update_runtime`
 signal to DroneWorkflow was the single biggest
@@ -66,13 +99,14 @@ state in Temporal" and "volatile telemetry in
 Redis" is load-bearing for the demo's event
 budget. Future edits must respect:
 
-1. **All Redis writes NEVER raise.** Both
-   `write_drone_telemetry` and `write_fleet_event`
-   swallow `RedisError` and `OSError`. An activity
-   must never abort a mission because Redis
-   flinched. If you add new telemetry fields or
-   new event-log callsites, keep the same swallow
-   contract.
+1. **All Redis writes NEVER raise.**
+   `write_drone_telemetry`, `write_fleet_event`,
+   and `write_drone_availability` all swallow
+   `RedisError` and `OSError`. An activity must
+   never abort a mission because Redis flinched.
+   If you add new telemetry fields, new event-log
+   callsites, or new availability fields, keep
+   the same swallow contract.
 2. **Workflow determinism.** `redis.asyncio` is
    imported transitively through `telemetry.py` →
    `activities/drone.py` → `workflows/delivery.py`.

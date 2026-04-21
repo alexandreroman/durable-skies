@@ -25,9 +25,13 @@ realism. The tick matches the nav-step cadence
 `activities/drone.py`). The loop sits
 *before* the `wait_condition` that blocks on
 the next order, so an idle drone visibly
-charges between missions. `_sync_to_fleet` is
-called on every tick so the fleet snapshot
-(and therefore the UI) sees the curve.
+charges between missions. The battery curve is
+carried to the UI by Redis telemetry (written
+per-nav-step during delivery) and by the API's
+DroneWorkflow query at `/fleet` poll time — the
+charging loop itself publishes **only** on the
+IDLE ↔ CHARGING threshold crossing (40 %), not
+on every +2 % tick.
 
 Battery is threaded through
 `DroneWorkflow.run`'s
@@ -90,18 +94,18 @@ has and charges progressively at home.
 ## 2. FleetWorkflow dispatch requires battery > 40%
 
 `workflows/fleet.py` defines
-`_MIN_DISPATCH_BATTERY_PCT = 40.0`. The filter
-is applied in three places in fleet.py and
-they must stay in sync:
+`_MIN_DISPATCH_BATTERY_PCT = 40.0`. After the
+variant 2 refactor the filter is applied in
+fewer places (no more round-robin, no more
+wait_condition on the local `self._drones`
+registry):
 
-1. The `idle_drones` list comprehension at the
-   top of the run loop.
-2. The `wait_condition` predicate for the "no
-   eligible drone" branch (dispatcher parks
-   until a drone is both IDLE and above the
-   threshold — `update_drone` signals from
-   charging ticks wake it).
-3. The `_pick_idle_drone` round-robin fallback.
+1. The `dispatchable` filter inside the
+   dispatcher step — applied to the list
+   returned by `read_drone_availabilities`.
+2. The deferred-dispatch polling branch that
+   re-reads Redis every 2 s when no
+   dispatchable drone exists.
 
 **The same 40% value is also duplicated in
 `workflows/drone_entity.py`** as
@@ -109,11 +113,11 @@ they must stay in sync:
 pointing back to fleet.py) — the drone entity
 uses it to pick between `IDLE` and `CHARGING`
 for its at-home state (see §3 below). So the
-"stay in sync" invariant now covers 4 places:
-3 filters in fleet.py + 1 constant in
-drone_entity.py.
+"stay in sync" invariant covers fleet.py's
+dispatch filter + drone_entity.py's state
+helper.
 
-The dispatcher filters keep the
+The dispatcher filter keeps the
 `battery_pct > 40` check even though a drone
 below the threshold now surfaces as `CHARGING`
 (and so is already excluded by the
@@ -166,11 +170,14 @@ The split is computed by
 MUST go through the helper:
 
 1. Startup, right after `initial_battery_pct`
-   is assigned (before the first
-   `_sync_to_fleet`).
+   is assigned (before the first availability
+   publish).
 2. Inside the charging loop, after each +2%
-   tick (the per-tick sync carries the
-   transition).
+   tick — availability is published only when
+   the resulting state enum actually crosses
+   the 40 % threshold (`prev_state` captured,
+   then compared). Steady-state ticks do not
+   touch Redis at all.
 3. Post-delivery cleanup — replaces the old
    unconditional `self._state = WorkflowState.IDLE`.
 4. End of the `update_runtime` signal handler,
@@ -178,17 +185,24 @@ MUST go through the helper:
    `{IDLE, CHARGING}` (never overwrite an
    in-flight state).
 
-### Why the charging-tick sync is OK
+### Charging ticks no longer sync the fleet
 
-The push/pull split memory says "signals push
-only on state-enum transitions". The charging
-loop is a pre-existing exception: it runs
-`_sync_to_fleet` on every tick to carry the
-battery curve to the UI. Adding the
-`_idle_state()` recompute before each tick's
-sync only means that tick may also carry the
-IDLE↔CHARGING transition — no new sync paths
-were introduced.
+Historically, the charging loop published to
+the fleet on every +2 % tick to carry the
+battery curve. After the Redis telemetry and
+availability splits, this is obsolete:
+
+- The battery curve reaches the UI via Redis
+  telemetry (during flight, 2 s cadence) and
+  via the API's DroneWorkflow query (at /fleet
+  poll time, when idle/charging).
+- Availability is pushed to Redis only on
+  state-enum transitions, not on battery
+  deltas. Removing the per-tick push saved
+  ~60 events per recharge on
+  FleetWorkflow — see the commit that
+  introduced the `prev_state` check in the
+  charging loop.
 
 ### Frontend mapping
 

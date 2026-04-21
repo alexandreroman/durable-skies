@@ -48,7 +48,7 @@ def _event(message: str, event_type: FleetEventType = FleetEventType.INFO) -> Fl
 
 
 @activity.defn
-async def takeoff_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id: str) -> str:
+async def takeoff_drone(drone_id: str, drone_workflow_id: str) -> str:
     activity.logger.info("Drone %s taking off", drone_id)
     await write_fleet_event(_event(f"🛫 {drone_id} takeoff"))
     await asyncio.sleep(1.5)
@@ -58,7 +58,7 @@ async def takeoff_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id
 
 
 @activity.defn
-async def land_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id: str) -> str:
+async def land_drone(drone_id: str, drone_workflow_id: str) -> str:
     activity.logger.info("Drone %s landing", drone_id)
     await write_fleet_event(_event(f"🛬 {drone_id} landing"))
     await asyncio.sleep(1.0)
@@ -72,7 +72,6 @@ async def navigate_drone(
     from_point_id: str,
     to_point_id: str,
     drone_workflow_id: str,
-    fleet_workflow_id: str,
     kind: str,
     battery_start_pct: float = 100.0,
 ) -> float:
@@ -144,7 +143,6 @@ async def pickup_package(
     order_id: str,
     base_id: str,
     drone_workflow_id: str,
-    fleet_workflow_id: str,
 ) -> str:
     activity.logger.info("Drone %s picking up order %s at %s", drone_id, order_id, base_id)
     await write_fleet_event(
@@ -161,7 +159,6 @@ async def dropoff_package(
     order_id: str,
     dropoff_point_id: str,
     drone_workflow_id: str,
-    fleet_workflow_id: str,
 ) -> str:
     activity.logger.info("Drone %s delivering order %s at %s", drone_id, order_id, dropoff_point_id)
     await update_drone(drone_workflow_id, state=WorkflowState.DELIVERING, add_signal="delivered")

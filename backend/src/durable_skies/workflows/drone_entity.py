@@ -1,10 +1,12 @@
 """Per-drone entity workflow.
 
 One long-lived workflow per physical drone. Owns the drone's runtime state
-(position, battery, flight plan) and forwards it to the singleton fleet
-workflow for UI aggregation. Each incoming order is executed as a child
-`DeliveryWorkflow`; the entity serializes orders — a new one is accepted only
-after the current delivery has completed or failed.
+(position, battery, flight plan) and publishes its eligibility snapshot to the
+Redis availability registry (`fleet:availability`) on every state-enum
+transition. The singleton `FleetWorkflow` reads that registry at dispatch
+time — it holds no drone registry of its own. Each incoming order is executed
+as a child `DeliveryWorkflow`; the entity serializes orders — a new one is
+accepted only after the current delivery has completed or failed.
 """
 
 import contextlib
@@ -15,8 +17,10 @@ from temporalio import workflow
 from temporalio.exceptions import ChildWorkflowError
 
 from .. import TASK_QUEUE
+from ..activities import write_drone_availability_activity
 from ..models import (
     Coordinate,
+    DroneAvailability,
     DroneRuntimeState,
     FlightLeg,
     FlightLegKind,
@@ -32,6 +36,7 @@ _CHARGE_STEP_PCT = 2.0
 _CHARGE_STEP_DELAY_S = 2.0
 # Must match fleet._MIN_DISPATCH_BATTERY_PCT — see progressive_charging_and_dispatch_gate memory.
 _MIN_DISPATCH_BATTERY_PCT = 40.0
+_PUBLISH_TIMEOUT = timedelta(seconds=5)
 
 
 def _build_flight_plan(order: Order, home_base_id: str) -> FlightPlan:
@@ -62,7 +67,6 @@ class DroneWorkflow:
         self._name: str | None = None
         self._home_base_id: str | None = None
         self._home_location: Coordinate | None = None
-        self._fleet_workflow_id: str | None = None
 
         self._state: WorkflowState = WorkflowState.IDLE
         self._position: Coordinate | None = None
@@ -82,7 +86,6 @@ class DroneWorkflow:
         name: str,
         home_base_id: str,
         home_location: Coordinate,
-        fleet_workflow_id: str,
         model_name: str,
         initial_battery_pct: float = 100.0,
     ) -> None:
@@ -92,38 +95,32 @@ class DroneWorkflow:
         self._home_base_id = home_base_id
         self._home_location = home_location
         self._position = home_location.model_copy()
-        self._fleet_workflow_id = fleet_workflow_id
         self._battery_pct = initial_battery_pct
         self._state = self._idle_state()
 
-        # Push an initial IDLE snapshot so the fleet knows we exist.
-        await self._sync_to_fleet()
+        # Publish an initial availability snapshot BEFORE the first wait_condition
+        # so the dispatcher can see the drone exists from the first dispatch cycle.
+        await self._publish_availability()
 
         while not self._shutdown:
             # Charge progressively while waiting for the next order. If an order arrives
             # or shutdown is signaled, bail out immediately.
-            while (
-                self._pending_order is None
-                and not self._shutdown
-                and self._battery_pct < 100.0
-            ):
+            while self._pending_order is None and not self._shutdown and self._battery_pct < 100.0:
                 await workflow.sleep(timedelta(seconds=_CHARGE_STEP_DELAY_S))
                 if self._pending_order is not None or self._shutdown:
                     break
                 prev_state = self._state
                 self._battery_pct = min(100.0, self._battery_pct + _CHARGE_STEP_PCT)
                 self._state = self._idle_state()
-                # Only sync on state enum transitions (CHARGING -> IDLE at 40%); battery ticks
-                # are published via the API's pull path to avoid re-inflating event history.
+                # Only republish on state enum transitions (CHARGING -> IDLE at 40%);
+                # battery ticks reach the UI via the API's telemetry pull path.
                 if self._state != prev_state:
-                    await self._sync_to_fleet()
+                    await self._publish_availability()
 
             # Battery is full (or we bailed out); wait for the order/shutdown or a
             # battery drop that should re-trigger charging (e.g. a test signal).
             await workflow.wait_condition(
-                lambda: self._pending_order is not None
-                or self._shutdown
-                or self._battery_pct < 100.0
+                lambda: self._pending_order is not None or self._shutdown or self._battery_pct < 100.0
             )
             if self._battery_pct < 100.0 and self._pending_order is None and not self._shutdown:
                 continue
@@ -141,7 +138,7 @@ class DroneWorkflow:
             self._state = WorkflowState.DISPATCHED
             self._signals = ["dispatched"]
             self._target_point_id = self._flight_plan.legs[0].to_point_id
-            await self._sync_to_fleet()
+            await self._publish_availability()
 
             # DeliveryWorkflow runs its own compensation saga; we only wait it out.
             with contextlib.suppress(ChildWorkflowError):
@@ -150,7 +147,6 @@ class DroneWorkflow:
                     args=[
                         drone_id,
                         workflow.info().workflow_id,
-                        fleet_workflow_id,
                         home_base_id,
                         order,
                         self._battery_pct,
@@ -168,7 +164,7 @@ class DroneWorkflow:
             self._target_point_id = None
             if self._home_location is not None:
                 self._position = self._home_location.model_copy()
-            await self._sync_to_fleet()
+            await self._publish_availability()
 
             if workflow.info().get_current_history_length() > _HISTORY_THRESHOLD:
                 workflow.continue_as_new(
@@ -177,7 +173,6 @@ class DroneWorkflow:
                         name,
                         home_base_id,
                         home_location,
-                        fleet_workflow_id,
                         model_name,
                         self._battery_pct,
                     ],
@@ -207,9 +202,9 @@ class DroneWorkflow:
                 self._signals = [*self._signals, sig]
         if self._state in (WorkflowState.IDLE, WorkflowState.CHARGING):
             self._state = self._idle_state()
-        # Only sync when the state enum moves — dispatcher idle-detection depends on it.
+        # Only publish when the state enum moves — dispatcher idle-detection depends on it.
         if self._state != prev_state:
-            await self._sync_to_fleet()
+            await self._publish_availability()
 
     @workflow.signal
     async def advance_leg(self) -> None:
@@ -223,7 +218,7 @@ class DroneWorkflow:
         if plan.current_leg_index < len(plan.legs):
             plan.legs[plan.current_leg_index].status = FlightLegStatus.ACTIVE
             self._target_point_id = plan.legs[plan.current_leg_index].to_point_id
-        # No fleet sync: the API pulls fresh flight_plan from the drone query.
+        # No availability publish: flight_plan changes don't affect dispatch eligibility.
 
     @workflow.signal
     async def low_battery(self) -> None:
@@ -248,7 +243,7 @@ class DroneWorkflow:
             status=FlightLegStatus.PENDING,
         )
         plan.legs.insert(plan.current_leg_index + 1, divert)
-        # No fleet sync: the API pulls fresh flight_plan from the drone query.
+        # No availability publish: flight_plan changes don't affect dispatch eligibility.
 
     @workflow.signal
     def shutdown(self) -> None:
@@ -280,22 +275,22 @@ class DroneWorkflow:
             flight_plan=self._flight_plan,
         )
 
-    async def _sync_to_fleet(self) -> None:
-        if self._fleet_workflow_id is None:
-            return
-        snapshot = self._snapshot()
-        payload: dict[str, Any] = {
-            "drone_id": snapshot.id,
-            "name": snapshot.name,
-            "home_base_id": snapshot.home_base_id,
-            "state": snapshot.state.value,
-            "position": snapshot.position.model_dump(),
-            "battery_pct": snapshot.battery_pct,
-            "workflow_id": snapshot.workflow_id,
-            "current_order_id": snapshot.current_order_id,
-            "signals": list(snapshot.signals),
-            "target_point_id": snapshot.target_point_id,
-            "flight_plan": snapshot.flight_plan.model_dump() if snapshot.flight_plan else None,
-        }
-        fleet_handle = workflow.get_external_workflow_handle(self._fleet_workflow_id)
-        await fleet_handle.signal("update_drone", payload)
+    async def _publish_availability(self) -> None:
+        """Upsert this drone's row in the Redis availability registry."""
+        assert self._drone_id is not None
+        assert self._name is not None
+        assert self._home_base_id is not None
+        availability = DroneAvailability(
+            drone_id=self._drone_id,
+            name=self._name,
+            home_base_id=self._home_base_id,
+            state=self._state,
+            battery_pct=self._battery_pct,
+            current_order_id=self._current_order.id if self._current_order else None,
+            updated_at=workflow.now().isoformat(),
+        )
+        await workflow.execute_local_activity(
+            write_drone_availability_activity,
+            availability,
+            start_to_close_timeout=_PUBLISH_TIMEOUT,
+        )

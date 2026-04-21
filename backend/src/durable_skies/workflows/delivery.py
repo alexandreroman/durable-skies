@@ -51,7 +51,6 @@ class DeliveryWorkflow:
         self,
         drone_id: str,
         drone_workflow_id: str,
-        fleet_workflow_id: str,
         home_base_id: str,
         order: Order,
         battery_start_pct: float,
@@ -66,7 +65,7 @@ class DeliveryWorkflow:
         try:
             await workflow.execute_activity(
                 takeoff_drone,
-                args=[drone_id, drone_workflow_id, fleet_workflow_id],
+                args=[drone_id, drone_workflow_id],
                 start_to_close_timeout=short,
                 retry_policy=fast_retry,
             )
@@ -79,7 +78,6 @@ class DeliveryWorkflow:
                     home_base_id,
                     order.pickup_base_id,
                     drone_workflow_id,
-                    fleet_workflow_id,
                     "to_target",
                     battery_start_pct,
                 ],
@@ -89,7 +87,7 @@ class DeliveryWorkflow:
             )
             await workflow.execute_activity(
                 pickup_package,
-                args=[drone_id, order.id, order.pickup_base_id, drone_workflow_id, fleet_workflow_id],
+                args=[drone_id, order.id, order.pickup_base_id, drone_workflow_id],
                 start_to_close_timeout=short,
                 retry_policy=fast_retry,
             )
@@ -100,7 +98,6 @@ class DeliveryWorkflow:
                     order.pickup_base_id,
                     order.dropoff_point_id,
                     drone_workflow_id,
-                    fleet_workflow_id,
                     "to_target",
                     battery,
                 ],
@@ -110,7 +107,7 @@ class DeliveryWorkflow:
             )
             await workflow.execute_activity(
                 dropoff_package,
-                args=[drone_id, order.id, order.dropoff_point_id, drone_workflow_id, fleet_workflow_id],
+                args=[drone_id, order.id, order.dropoff_point_id, drone_workflow_id],
                 start_to_close_timeout=short,
                 retry_policy=fast_retry,
             )
@@ -125,7 +122,6 @@ class DeliveryWorkflow:
                     order.dropoff_point_id,
                     home_base_id,
                     drone_workflow_id,
-                    fleet_workflow_id,
                     "returning",
                     battery,
                 ],
@@ -135,7 +131,7 @@ class DeliveryWorkflow:
             )
             await workflow.execute_activity(
                 land_drone,
-                args=[drone_id, drone_workflow_id, fleet_workflow_id],
+                args=[drone_id, drone_workflow_id],
                 start_to_close_timeout=short,
                 retry_policy=fast_retry,
             )
@@ -224,13 +220,17 @@ class DeliveryWorkflow:
         elif action == ACTION_EMERGENCY_LAND:
             nearest_id, nearest_name = self._nearest_base(order)
             await self._emit_rtb(
-                drone_handle, drone_id, nearest_id,
+                drone_handle,
+                drone_id,
+                nearest_id,
                 f"🛬 {drone_id} emergency landing at {nearest_name}",
             )
         elif action == ACTION_DIVERT_RECHARGE:
             nearest_id, nearest_name = self._nearest_base(order)
             await self._emit_rtb(
-                drone_handle, drone_id, nearest_id,
+                drone_handle,
+                drone_id,
+                nearest_id,
                 f"🔋 {drone_id} diverting to {nearest_name} to recharge",
             )
             await self._log_event(f"↩️ {drone_id} returning home", FleetEventType.SIGNAL)

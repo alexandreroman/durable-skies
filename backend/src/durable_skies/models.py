@@ -83,6 +83,23 @@ class DroneRuntimeState(BaseModel):
     flight_plan: FlightPlan | None = None
 
 
+class DroneAvailability(BaseModel):
+    """Dispatcher-facing registry snapshot published by each DroneWorkflow.
+
+    Semantically distinct from `DroneRuntimeState`: carries only the fields the
+    dispatcher needs to rank candidates, plus `updated_at` for staleness
+    filtering on the read side.
+    """
+
+    drone_id: str
+    name: str
+    home_base_id: str
+    state: WorkflowState
+    battery_pct: float = Field(ge=0, le=100)
+    current_order_id: str | None = None
+    updated_at: str  # ISO-8601 UTC
+
+
 class OrderStatus(StrEnum):
     PENDING = "pending"
     ASSIGNED = "assigned"
