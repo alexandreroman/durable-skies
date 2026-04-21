@@ -16,3 +16,12 @@ def resolve_location(point_id: str) -> Coordinate:
     if point_id in _DELIVERY_POINTS:
         return _DELIVERY_POINTS[point_id].location
     raise KeyError(f"Unknown location id: {point_id}")
+
+
+def resolve_name(point_id: str) -> str:
+    """Resolve any base or delivery-point id to its human-readable name."""
+    if point_id in _BASES:
+        return _BASES[point_id].name
+    if point_id in _DELIVERY_POINTS:
+        return _DELIVERY_POINTS[point_id].name
+    raise KeyError(f"Unknown location id: {point_id}")

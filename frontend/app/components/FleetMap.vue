@@ -176,6 +176,10 @@ function draw(): void {
     ctx.moveTo(x, y - 7);
     ctx.lineTo(x, y + 7);
     ctx.stroke();
+    ctx.font = '8px "JetBrains Mono", ui-monospace, monospace';
+    ctx.fillStyle = "rgba(232,233,243,0.6)";
+    ctx.textAlign = "center";
+    ctx.fillText(p.name, x, y + 16);
   }
 
   for (const b of props.bases) {

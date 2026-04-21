@@ -12,7 +12,7 @@ from temporalio.exceptions import ApplicationError
 
 from ..models import Coordinate, FleetEventType, WorkflowState
 from .fleet_signal import append_event, update_drone
-from .world import resolve_location
+from .world import resolve_location, resolve_name
 
 _NAV_STEPS = 24
 _NAV_STEP_DELAY_S = 0.5
@@ -113,7 +113,7 @@ async def navigate_drone(
 
     await append_event(
         fleet_workflow_id,
-        f"📍 {drone_id} → {to_point_id}",
+        f"📍 {drone_id} → {resolve_name(to_point_id)}",
         FleetEventType.INFO,
     )
     return battery
@@ -129,7 +129,7 @@ async def pickup_package(
     activity.logger.info("Drone %s picking up order %s at %s", drone_id, order_id, base_id)
     await append_event(
         fleet_workflow_id,
-        f"📦 {drone_id} pickup {base_id}",
+        f"📦 {drone_id} pickup {resolve_name(base_id)}",
         FleetEventType.SIGNAL,
     )
     await asyncio.sleep(1.0)
