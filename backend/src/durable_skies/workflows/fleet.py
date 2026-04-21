@@ -37,6 +37,7 @@ from ..world import DELIVERY_POINTS, DEPOTS, initial_drones
 
 MAX_EVENTS = 40
 _HISTORY_THRESHOLD = 2000
+_MIN_DISPATCH_BATTERY_PCT = 50.0
 
 
 @workflow.defn
@@ -91,10 +92,16 @@ class FleetWorkflow:
                 return
 
             order = self._pending[0]
-            idle_drones = [d for d in self._drones.values() if d.state == WorkflowState.IDLE]
+            idle_drones = [
+                d for d in self._drones.values()
+                if d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT
+            ]
             if not idle_drones:
                 await workflow.wait_condition(
-                    lambda: any(d.state == WorkflowState.IDLE for d in self._drones.values())
+                    lambda: any(
+                        d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT
+                        for d in self._drones.values()
+                    )
                     or self._shutdown
                 )
                 continue
@@ -256,7 +263,8 @@ class FleetWorkflow:
         for i in range(n):
             idx = (self._next_drone_idx + i) % n
             drone_id = self._drone_order[idx]
-            if self._drones[drone_id].state == WorkflowState.IDLE:
+            d = self._drones[drone_id]
+            if d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT:
                 self._next_drone_idx = (idx + 1) % n
                 return drone_id
         return None

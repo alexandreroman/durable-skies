@@ -8,6 +8,7 @@ after the current delivery has completed or failed.
 """
 
 import contextlib
+from datetime import timedelta
 from typing import Any
 
 from temporalio import workflow
@@ -27,6 +28,8 @@ from ..models import (
 from .delivery import DeliveryWorkflow
 
 _HISTORY_THRESHOLD = 2000
+_CHARGE_STEP_PCT = 2.0
+_CHARGE_STEP_DELAY_S = 2.0
 
 
 def _build_flight_plan(order: Order, home_base_id: str) -> FlightPlan:
@@ -79,19 +82,43 @@ class DroneWorkflow:
         home_location: Coordinate,
         fleet_workflow_id: str,
         model_name: str,
+        initial_battery_pct: float = 100.0,
     ) -> None:
+        home_location = Coordinate.model_validate(home_location)
         self._drone_id = drone_id
         self._name = name
         self._home_base_id = home_base_id
         self._home_location = home_location
         self._position = home_location.model_copy()
         self._fleet_workflow_id = fleet_workflow_id
+        self._battery_pct = initial_battery_pct
 
         # Push an initial IDLE snapshot so the fleet knows we exist.
         await self._sync_to_fleet()
 
         while not self._shutdown:
-            await workflow.wait_condition(lambda: self._pending_order is not None or self._shutdown)
+            # Charge progressively while waiting for the next order. If an order arrives
+            # or shutdown is signaled, bail out immediately.
+            while (
+                self._pending_order is None
+                and not self._shutdown
+                and self._battery_pct < 100.0
+            ):
+                await workflow.sleep(timedelta(seconds=_CHARGE_STEP_DELAY_S))
+                if self._pending_order is not None or self._shutdown:
+                    break
+                self._battery_pct = min(100.0, self._battery_pct + _CHARGE_STEP_PCT)
+                await self._sync_to_fleet()
+
+            # Battery is full (or we bailed out); wait for the order/shutdown or a
+            # battery drop that should re-trigger charging (e.g. a test signal).
+            await workflow.wait_condition(
+                lambda: self._pending_order is not None
+                or self._shutdown
+                or self._battery_pct < 100.0
+            )
+            if self._battery_pct < 100.0 and self._pending_order is None and not self._shutdown:
+                continue
             if self._shutdown:
                 return
 
@@ -129,7 +156,6 @@ class DroneWorkflow:
             self._current_delivery_workflow_id = None
             self._flight_plan = None
             self._state = WorkflowState.IDLE
-            self._battery_pct = 100.0
             self._signals = []
             self._target_point_id = None
             if self._home_location is not None:
@@ -145,6 +171,7 @@ class DroneWorkflow:
                         home_location,
                         fleet_workflow_id,
                         model_name,
+                        self._battery_pct,
                     ],
                 )
 

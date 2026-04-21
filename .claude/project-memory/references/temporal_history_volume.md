@@ -61,10 +61,17 @@ state across deliveries MUST also be:
 3. included in the `args=[...]` list passed to
    `workflow.continue_as_new`.
 
-`DroneWorkflow` does not have this issue — its
-CAN point is the IDLE reset where entity state
-equals init state, so no state is threaded
-through CAN.
+`DroneWorkflow` has the same invariant on a
+smaller scale: `self._battery_pct` now carries
+across missions (progressive charging lives in
+the entity, not the delivery child), so its CAN
+call passes `self._battery_pct` as the last
+positional arg and `run()` accepts it via
+`initial_battery_pct: float = 100.0`. Any future
+cross-mission entity state (per-drone odometer,
+cumulative hours, etc.) must be threaded through
+CAN the same way. See
+[progressive charging + 50% dispatch gate](progressive_charging_and_dispatch_gate.md).
 
 **Why:** silently adding a new field (say, a
 per-order metrics counter) without threading it

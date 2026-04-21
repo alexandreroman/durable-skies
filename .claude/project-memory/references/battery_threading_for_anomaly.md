@@ -27,12 +27,9 @@ anomaly path by manually signaling a drone
 to a low battery via
 `update_runtime {"battery_pct": 28}` and then
 forcing that drone to be picked (e.g. by
-staging the others as `DISPATCHED`).
-`_finalize` still resets battery to 100% at the
-end of every mission, so cross-mission depletion
-isn't automatic — a future enhancement would
-drop that reset and let battery accumulate
-naturally.
+staging the others as `DISPATCHED`). Battery
+now also carries across missions — see
+[progressive charging + 50% dispatch gate](progressive_charging_and_dispatch_gate.md).
 
 **How to apply:** keep the `battery_start_pct`
 thread intact when touching

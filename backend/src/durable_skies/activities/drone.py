@@ -109,6 +109,7 @@ async def navigate_drone(
             await update_drone(
                 drone_workflow_id,
                 state=WorkflowState.INCIDENT,
+                battery_pct=battery,
                 add_signal="battery_critical",
             )
             await append_event(
@@ -125,6 +126,7 @@ async def navigate_drone(
         f"📍 {drone_id} → {resolve_name(to_point_id)}",
         FleetEventType.INFO,
     )
+    await update_drone(drone_workflow_id, battery_pct=battery)
     await advance_leg(drone_workflow_id)
     return battery
 

@@ -18,3 +18,4 @@
 - [Temporal history volume invariants](references/temporal_history_volume.md) — nav cadence triplet must move together; new FleetWorkflow state must be threaded through the CAN payload
 - [Fleet push/pull split](references/fleet_push_pull_split.md) — drones push state-enum transitions only; API pulls flight_plan/state/signals from each DroneWorkflow at /fleet time
 - [Redis telemetry split](references/redis_telemetry_split.md) — position/battery live in Redis (10s TTL), not Temporal; telemetry writes must never raise and RETURNING state moves with DeliveryWorkflow
+- [Progressive charging + 50% dispatch gate](references/progressive_charging_and_dispatch_gate.md) — battery carries across missions via DroneWorkflow sleep loop; dispatcher filters on battery_pct > 50

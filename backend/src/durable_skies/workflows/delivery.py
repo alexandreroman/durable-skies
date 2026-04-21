@@ -231,17 +231,6 @@ class DeliveryWorkflow:
                 FleetEvent(
                     id=workflow.uuid4().hex,
                     time=workflow.now().isoformat(),
-                    type=FleetEventType.INFO,
-                    message=f"⚡ {drone_id} recharged at {nearest_name}",
-                ),
-            )
-            await drone_handle.signal("update_runtime", {"battery_pct": 100.0})
-            await workflow.sleep(timedelta(seconds=1))
-            await fleet_handle.signal(
-                "append_event",
-                FleetEvent(
-                    id=workflow.uuid4().hex,
-                    time=workflow.now().isoformat(),
                     type=FleetEventType.SIGNAL,
                     message=f"↩️ {drone_id} returning home",
                 ),
@@ -325,13 +314,11 @@ class DeliveryWorkflow:
             ),
         )
 
-        # Mimic the prototype's "respawn": wait a beat, then flip IDLE with fresh battery.
         await workflow.sleep(timedelta(seconds=3))
         await drone_handle.signal(
             "update_runtime",
             {
                 "state": WorkflowState.IDLE.value,
-                "battery_pct": 100.0,
                 "target_point_id": None,
                 "clear_signals": True,
             },
