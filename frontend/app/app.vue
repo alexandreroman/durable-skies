@@ -95,6 +95,7 @@ const mapFocusedDrone = computed(() => {
         :delivery-points="deliveryPoints"
         :selected-drone="mapFocusedDrone"
         @select="(id) => selectDrone(id)"
+        @hover="(id) => setHoveredDrone(id)"
       />
       <div class="ds-right-rail flex flex-col">
         <WorkflowRegistry

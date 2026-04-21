@@ -10,9 +10,14 @@ const props = defineProps<{
   selectedDrone: string | null;
 }>();
 
-const emit = defineEmits<{ select: [id: string | null] }>();
+const emit = defineEmits<{
+  select: [id: string | null];
+  hover: [id: string | null];
+}>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+
+let lastHoveredId: string | null = null;
 
 // Tween each drone toward its last /fleet position over the observed inter-update interval.
 const TWEEN_DURATION_MS_DEFAULT = 2000;
@@ -340,12 +345,10 @@ onBeforeUnmount(() => {
   if (dprMedia) dprMedia.removeEventListener("change", handleDprChange);
 });
 
-function handleClick(event: MouseEvent): void {
-  const canvas = canvasRef.value;
-  if (!canvas) return;
+// With HiDPI backing store, client coords and the drawing coord space are
+// both in CSS pixels, so no scale factor is needed.
+function hitTestDrone(event: MouseEvent, canvas: HTMLCanvasElement): string | null {
   const rect = canvas.getBoundingClientRect();
-  // With HiDPI backing store, client coords and the drawing coord space are
-  // both in CSS pixels, so no scale factor is needed.
   const mx = event.clientX - rect.left;
   const my = event.clientY - rect.top;
   const now = performance.now();
@@ -356,13 +359,45 @@ function handleClick(event: MouseEvent): void {
     const { x, y } = latLngToXY(rendered.lat, rendered.lon, rect.width, rect.height);
     if (Math.hypot(x - mx, y - my) < 16) found = drone.id;
   }
-  emit("select", found);
+  return found;
+}
+
+function handleClick(event: MouseEvent): void {
+  const canvas = canvasRef.value;
+  if (!canvas) return;
+  emit("select", hitTestDrone(event, canvas));
+}
+
+function handleMouseMove(event: MouseEvent): void {
+  const canvas = canvasRef.value;
+  if (!canvas) return;
+  const found = hitTestDrone(event, canvas);
+  canvas.style.cursor = found ? "pointer" : "";
+  if (found !== lastHoveredId) {
+    lastHoveredId = found;
+    emit("hover", found);
+  }
+}
+
+function handleMouseLeave(): void {
+  const canvas = canvasRef.value;
+  if (canvas) canvas.style.cursor = "";
+  if (lastHoveredId !== null) {
+    lastHoveredId = null;
+    emit("hover", null);
+  }
 }
 </script>
 
 <template>
   <div class="ds-map-wrapper">
-    <canvas ref="canvasRef" class="ds-map-canvas" @click="handleClick" />
+    <canvas
+      ref="canvasRef"
+      class="ds-map-canvas"
+      @click="handleClick"
+      @mousemove="handleMouseMove"
+      @mouseleave="handleMouseLeave"
+    />
     <div class="ds-map-legend">
       <div class="ds-map-legend-title">States</div>
       <div v-for="[key, style] in legendStates" :key="key" class="ds-map-legend-row">
