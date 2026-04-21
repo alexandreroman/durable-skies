@@ -208,7 +208,7 @@ body,
 
 .ds-wf-row {
   cursor: pointer;
-  padding: 10px 14px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--ds-divider);
   transition: background-color 120ms ease;
 }
@@ -272,15 +272,15 @@ body,
   font-family: var(--ds-font-mono);
   font-size: 9px;
   color: var(--ds-text-muted);
-  min-width: 28px;
-  text-align: right;
+  min-width: 24px;
+  text-align: left;
 }
 
 .ds-signal-chip {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 3px;
   background: transparent;
   font-family: var(--ds-font-mono);
@@ -288,6 +288,55 @@ body,
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.ds-order-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: transparent;
+  border: 1px solid var(--ds-border-strong);
+  color: var(--ds-text-muted);
+  font-family: var(--ds-font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  text-decoration: none;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+  flex-shrink: 0;
+}
+
+a.ds-order-chip:hover {
+  color: var(--ds-violet);
+  border-color: var(--ds-violet);
+  text-decoration: underline;
+}
+
+.ds-home-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--ds-font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ds-text-muted);
+}
+
+.ds-chip-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 18px;
+  overflow: hidden;
 }
 
 /* --- Event log ----------------------------------------------------------- */

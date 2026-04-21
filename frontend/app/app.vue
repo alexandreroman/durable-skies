@@ -60,6 +60,8 @@ const { drones, bases, deliveryPoints, events, selectedDrone, selectDrone, submi
         <WorkflowRegistry
           class="flex-1 overflow-hidden"
           :drones="drones"
+          :bases="bases"
+          :delivery-points="deliveryPoints"
           :selected-drone="selectedDrone"
           @select="(id) => selectDrone(id)"
         />
