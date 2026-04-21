@@ -11,6 +11,7 @@ export function useFleet() {
   const pendingOrdersCount = ref(0);
   const dispatching = ref(false);
   const selectedDrone = ref<string | null>(null);
+  const hoveredDrone = ref<string | null>(null);
 
   const config = useRuntimeConfig();
   let stopped = false;
@@ -39,6 +40,10 @@ export function useFleet() {
 
   function selectDrone(id: string | null): void {
     selectedDrone.value = selectedDrone.value === id ? null : id;
+  }
+
+  function setHoveredDrone(id: string | null): void {
+    hoveredDrone.value = id;
   }
 
   async function submitOrder(): Promise<void> {
@@ -89,7 +94,9 @@ export function useFleet() {
     pendingOrdersCount,
     dispatching,
     selectedDrone,
+    hoveredDrone,
     selectDrone,
+    setHoveredDrone,
     submitOrder,
   };
 }

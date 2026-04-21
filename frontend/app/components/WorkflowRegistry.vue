@@ -20,7 +20,7 @@ const props = defineProps<{
   selectedDrone: string | null;
 }>();
 
-const emit = defineEmits<{ select: [id: string | null] }>();
+const emit = defineEmits<{ select: [id: string | null]; hover: [id: string | null] }>();
 
 const baseById = computed(() => new Map(props.bases.map((b) => [b.id, b])));
 
@@ -74,6 +74,8 @@ function orderLabel(orderId: string): string {
               : '2px solid transparent',
         }"
         @click="emit('select', drone.id)"
+        @mouseenter="emit('hover', drone.id)"
+        @mouseleave="emit('hover', null)"
       >
         <div class="mb-1 flex items-center justify-between gap-2">
           <div class="flex min-w-0 items-center gap-2">

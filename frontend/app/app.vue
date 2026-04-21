@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { useFleet } from "./composables/useFleet";
 
 const {
@@ -9,9 +10,20 @@ const {
   pendingOrdersCount,
   dispatching,
   selectedDrone,
+  hoveredDrone,
   selectDrone,
+  setHoveredDrone,
   submitOrder,
 } = useFleet();
+
+const mapFocusedDrone = computed(() => {
+  const hoverId = hoveredDrone.value;
+  if (hoverId !== null) {
+    const hovered = drones.value.find((d) => d.id === hoverId);
+    if (hovered?.flight_plan) return hoverId;
+  }
+  return selectedDrone.value;
+});
 </script>
 
 <template>
@@ -81,7 +93,7 @@ const {
         :drones="drones"
         :bases="bases"
         :delivery-points="deliveryPoints"
-        :selected-drone="selectedDrone"
+        :selected-drone="mapFocusedDrone"
         @select="(id) => selectDrone(id)"
       />
       <div class="ds-right-rail flex flex-col">
@@ -91,6 +103,7 @@ const {
           :bases="bases"
           :selected-drone="selectedDrone"
           @select="(id) => selectDrone(id)"
+          @hover="(id) => setHoveredDrone(id)"
         />
         <Transition name="ds-event-log">
           <EventLog v-if="events.length > 0" class="h-[200px]" :events="events" />
