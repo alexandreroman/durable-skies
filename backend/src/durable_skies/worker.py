@@ -52,6 +52,7 @@ async def run() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("LiteLLM").setLevel(logging.WARNING)
     asyncio.run(run())
 
 
