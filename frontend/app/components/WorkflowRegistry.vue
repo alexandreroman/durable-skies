@@ -88,16 +88,33 @@ function orderLabel(orderId: string): string {
             />
             <span class="ds-wf-name truncate">{{ drone.name }}</span>
           </div>
-          <span
-            class="ds-state-pill"
-            :style="{
-              background: WORKFLOW_STATES[drone.state].bg,
-              color: WORKFLOW_STATES[drone.state].color,
-              border: `1px solid ${WORKFLOW_STATES[drone.state].color}55`,
-            }"
-          >
-            {{ WORKFLOW_STATES[drone.state].label }}
-          </span>
+          <div class="flex items-center gap-2">
+            <template v-if="drone.current_order_id">
+              <a
+                v-if="drone.workflow_id"
+                class="ds-order-chip"
+                :href="workflowUrl(drone.workflow_id)"
+                target="_blank"
+                rel="noopener noreferrer"
+                @click.stop
+              >
+                order #{{ orderLabel(drone.current_order_id) }}
+              </a>
+              <span v-else class="ds-order-chip">
+                order #{{ orderLabel(drone.current_order_id) }}
+              </span>
+            </template>
+            <span
+              class="ds-state-pill"
+              :style="{
+                background: WORKFLOW_STATES[drone.state].bg,
+                color: WORKFLOW_STATES[drone.state].color,
+                border: `1px solid ${WORKFLOW_STATES[drone.state].color}55`,
+              }"
+            >
+              {{ WORKFLOW_STATES[drone.state].label }}
+            </span>
+          </div>
         </div>
 
         <div class="mb-1.5 flex items-center justify-between gap-2">
@@ -153,21 +170,6 @@ function orderLabel(orderId: string): string {
         </div>
 
         <div class="mt-1.5 ds-chip-row">
-          <template v-if="drone.current_order_id">
-            <a
-              v-if="drone.workflow_id"
-              class="ds-order-chip"
-              :href="workflowUrl(drone.workflow_id)"
-              target="_blank"
-              rel="noopener noreferrer"
-              @click.stop
-            >
-              order #{{ orderLabel(drone.current_order_id) }}
-            </a>
-            <span v-else class="ds-order-chip">
-              order #{{ orderLabel(drone.current_order_id) }}
-            </span>
-          </template>
           <span
             v-for="(signal, i) in drone.signals.slice(-2)"
             :key="i"
