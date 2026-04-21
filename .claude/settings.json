@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "skillbox@skillbox": true,
+    "temporal-developer@temporal-marketplace": true
+  }
+}

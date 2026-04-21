@@ -1,0 +1,47 @@
+[project]
+name = "durable-skies"
+version = "0.1.0"
+description = "Durable multi-agent drone delivery demo built with Google ADK and Temporal."
+readme = "../README.md"
+authors = [
+    { name = "Alexandre Roman", email = "alexandre.roman@temporal.io" }
+]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "temporalio[google-adk]>=1.24.0",
+    "google-adk>=1.0.0",
+    "litellm>=1.50.0",
+    "anthropic>=0.40.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+durable-skies-worker = "durable_skies.worker:main"
+durable-skies-api = "durable_skies.api.server:main"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "watchfiles>=0.24.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
