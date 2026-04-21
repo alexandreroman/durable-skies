@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { Base, DeliveryPoint, Drone, FlightLegKind } from "../types/fleet";
+import type { Base, Drone, FlightLegKind } from "../types/fleet";
 import { SIGNAL_COLORS, WORKFLOW_STATES } from "../composables/fleetConstants";
 
 const INCIDENT_COLOR = "#FF6B6B";
@@ -19,14 +19,12 @@ const LEG_LABELS: Record<FlightLegKind, string> = {
 const props = defineProps<{
   drones: Drone[];
   bases: Base[];
-  deliveryPoints: DeliveryPoint[];
   selectedDrone: string | null;
 }>();
 
 const emit = defineEmits<{ select: [id: string | null] }>();
 
 const baseById = computed(() => new Map(props.bases.map((b) => [b.id, b])));
-const deliveryPointById = computed(() => new Map(props.deliveryPoints.map((p) => [p.id, p])));
 
 function batteryColor(battery: number): string {
   if (battery > 40) return "#00D4A0";
@@ -44,10 +42,6 @@ function workflowUrl(workflowId: string): string {
 
 function baseName(baseId: string): string {
   return baseById.value.get(baseId)?.name ?? baseId;
-}
-
-function deliveryPointName(pointId: string): string {
-  return deliveryPointById.value.get(pointId)?.name ?? pointId;
 }
 
 function orderLabel(orderId: string): string {
@@ -107,10 +101,7 @@ function orderLabel(orderId: string): string {
         </div>
 
         <div class="mb-1.5 flex items-center justify-between gap-2">
-          <span v-if="drone.target_point_id" class="ds-wf-meta min-w-0 truncate">
-            → {{ deliveryPointName(drone.target_point_id) }}
-          </span>
-          <span class="ds-home-chip ml-auto truncate">⌂ {{ baseName(drone.home_base_id) }}</span>
+          <span class="ds-home-chip truncate">⌂ {{ baseName(drone.home_base_id) }}</span>
         </div>
 
         <div class="flex items-center gap-1">
@@ -190,37 +181,39 @@ function orderLabel(orderId: string): string {
           </span>
         </div>
 
-        <div v-if="drone.flight_plan" class="ds-plan-track mt-1.5">
-          <template v-for="(leg, i) in drone.flight_plan.legs" :key="i">
-            <span
-              class="ds-plan-step"
-              :class="[
-                `is-${leg.status}`,
-                { 'is-divert': leg.kind === 'divert_to_base' },
-              ]"
-              :style="
-                leg.status === 'active'
-                  ? {
-                      background:
-                        leg.kind === 'divert_to_base'
-                          ? INCIDENT_COLOR
-                          : WORKFLOW_STATES[drone.state].color,
-                      borderColor:
-                        leg.kind === 'divert_to_base'
-                          ? INCIDENT_COLOR
-                          : WORKFLOW_STATES[drone.state].color,
-                    }
-                  : leg.kind === 'divert_to_base'
-                    ? { borderColor: INCIDENT_COLOR, color: INCIDENT_COLOR }
-                    : {}
-              "
-              :title="LEG_LABELS[leg.kind]"
-            />
-            <span
-              v-if="i < drone.flight_plan.legs.length - 1"
-              class="ds-plan-link"
-              :class="{ 'is-done': leg.status === 'done' }"
-            />
+        <div class="ds-plan-track mt-1.5">
+          <template v-if="drone.flight_plan">
+            <template v-for="(leg, i) in drone.flight_plan.legs" :key="i">
+              <span
+                class="ds-plan-step"
+                :class="[
+                  `is-${leg.status}`,
+                  { 'is-divert': leg.kind === 'divert_to_base' },
+                ]"
+                :style="
+                  leg.status === 'active'
+                    ? {
+                        background:
+                          leg.kind === 'divert_to_base'
+                            ? INCIDENT_COLOR
+                            : WORKFLOW_STATES[drone.state].color,
+                        borderColor:
+                          leg.kind === 'divert_to_base'
+                            ? INCIDENT_COLOR
+                            : WORKFLOW_STATES[drone.state].color,
+                      }
+                    : leg.kind === 'divert_to_base'
+                      ? { borderColor: INCIDENT_COLOR, color: INCIDENT_COLOR }
+                      : {}
+                "
+                :title="LEG_LABELS[leg.kind]"
+              />
+              <span
+                v-if="i < drone.flight_plan.legs.length - 1"
+                class="ds-plan-link"
+                :class="{ 'is-done': leg.status === 'done' }"
+              />
+            </template>
           </template>
         </div>
       </div>
@@ -241,6 +234,11 @@ function orderLabel(orderId: string): string {
   gap: 3px;
   flex-wrap: nowrap;
   overflow: hidden;
+  min-height: 10px;
+}
+
+.ds-chip-row {
+  min-height: 18px;
 }
 
 .ds-plan-step {
@@ -263,7 +261,7 @@ function orderLabel(orderId: string): string {
 .ds-plan-step.is-active {
   width: 8px;
   height: 8px;
-  animation: ds-plan-pulse 1.4s ease-in-out infinite;
+  animation: ds-plan-glow 1.6s ease-in-out infinite;
 }
 
 .ds-plan-step.is-pending {
@@ -286,15 +284,13 @@ function orderLabel(orderId: string): string {
   background: rgba(255, 255, 255, 0.35);
 }
 
-@keyframes ds-plan-pulse {
+@keyframes ds-plan-glow {
   0%,
   100% {
-    box-shadow: 0 0 0 0 currentColor;
-    opacity: 1;
+    box-shadow: 0 0 2px 0 color-mix(in srgb, currentColor 60%, transparent);
   }
   50% {
-    box-shadow: 0 0 4px 1px currentColor;
-    opacity: 0.7;
+    box-shadow: 0 0 5px 0 color-mix(in srgb, currentColor 60%, transparent);
   }
 }
 </style>
