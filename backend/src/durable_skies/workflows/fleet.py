@@ -1,10 +1,14 @@
 """Fleet workflow: long-running supervisor for the drone fleet.
 
-Owns the aggregated runtime snapshot (drones + event log), exposes it to the
-FastAPI layer through a query, and routes every incoming order to a per-drone
-entity workflow (`DroneWorkflow`). Entities signal back with drone updates;
-activities signal back with event-log entries. The fleet stays the single
-source of truth for the UI while remaining a thin aggregator.
+Owns the aggregated runtime snapshot of drones, exposes it to the FastAPI
+layer through a query, and routes every incoming order to a per-drone entity
+workflow (`DroneWorkflow`). Entities signal back with drone updates. The
+fleet stays the single source of truth for business state while remaining a
+thin aggregator.
+
+The fleet event log (takeoff/pickup/incident notifications) is written to
+Redis through the `log_fleet_event` local activity — it is pure observability
+and does not belong in workflow history. See `..events`.
 
 Order-to-drone assignment is delegated to an ADK dispatcher agent (see
 `..agents.dispatcher`). A round-robin picker is kept as a deterministic
@@ -13,6 +17,7 @@ fallback when the agent fails or returns an invalid choice.
 
 import json
 from collections import deque
+from datetime import timedelta
 from typing import Any
 
 from google.adk.runners import InMemoryRunner
@@ -23,6 +28,7 @@ with workflow.unsafe.imports_passed_through():
     from ..agents import DISPATCH_DECISION_KEY, build_dispatcher_agent
 
 from .. import drone_workflow_id, order_workflow_id
+from ..activities import log_fleet_event
 from ..models import (
     Coordinate,
     DroneRuntimeState,
@@ -35,9 +41,9 @@ from ..models import (
 )
 from ..world import DELIVERY_POINTS, DEPOTS, initial_drones
 
-MAX_EVENTS = 40
 _HISTORY_THRESHOLD = 2000
 _MIN_DISPATCH_BATTERY_PCT = 40.0
+_LOG_EVENT_TIMEOUT = timedelta(seconds=5)
 
 
 @workflow.defn
@@ -46,7 +52,6 @@ class FleetWorkflow:
         self._drones: dict[str, DroneRuntimeState] = {d.id: d for d in initial_drones()}
         self._drone_order: list[str] = sorted(self._drones.keys())
         self._pending: deque[Order] = deque()
-        self._events: deque[FleetEvent] = deque(maxlen=MAX_EVENTS)
         self._next_drone_idx = 0
         self._shutdown = False
         self._model_name: str | None = None
@@ -59,7 +64,6 @@ class FleetWorkflow:
         model_name: str,
         initial_drones: list[DroneRuntimeState] | None = None,
         initial_pending: list[Order] | None = None,
-        initial_events: list[FleetEvent] | None = None,
         initial_next_drone_idx: int = 0,
         fast_model_name: str | None = None,
     ) -> None:
@@ -69,8 +73,6 @@ class FleetWorkflow:
             self._drones = {d.id: d for d in initial_drones}
         if initial_pending is not None:
             self._pending = deque(initial_pending)
-        if initial_events is not None:
-            self._events = deque(initial_events, maxlen=MAX_EVENTS)
         self._next_drone_idx = initial_next_drone_idx
         workflow.logger.info("FleetWorkflow started")
         while not self._shutdown:
@@ -83,7 +85,6 @@ class FleetWorkflow:
                         self._model_name,
                         [self._drones[d_id] for d_id in self._drone_order],
                         list(self._pending),
-                        list(self._events),
                         self._next_drone_idx,
                         self._fast_model_name,
                     ],
@@ -121,7 +122,7 @@ class FleetWorkflow:
             drone = self._drones[drone_id]
             drone.state = WorkflowState.DISPATCHED
             drone.current_order_id = order.id
-            self._append_event(FleetEventType.SIGNAL, f"📦 {drone.name} dispatched")
+            await self._log_event(f"📦 {drone.name} dispatched", FleetEventType.SIGNAL)
 
             drone_handle = workflow.get_external_workflow_handle(drone_workflow_id(drone_id))
             await drone_handle.signal("assign_order", order)
@@ -188,15 +189,15 @@ class FleetWorkflow:
 
             drone_name = self._drones[drone_id].name
             workflow.logger.info("Dispatcher picked %s: %s", drone_name, reasoning)
-            self._append_event(FleetEventType.INFO, f"🤖 Dispatcher → {drone_name}")
+            await self._log_event(f"🤖 Dispatcher → {drone_name}", FleetEventType.INFO)
             return drone_id
         except Exception as err:
             # Any failure (LLM error, sandbox hiccup, malformed decision) yields the
             # deterministic round-robin fallback so orders keep flowing.
             workflow.logger.warning("Dispatcher agent failed: %s", err)
-            self._append_event(
-                FleetEventType.INFO,
+            await self._log_event(
                 "⚠️ Dispatcher failed, falling back to round-robin",
+                FleetEventType.INFO,
             )
             return None
 
@@ -234,31 +235,32 @@ class FleetWorkflow:
         if "signals" in update and update["signals"] is not None:
             drone.signals = list(update["signals"])
 
-    @workflow.signal
-    def append_event(self, event: FleetEvent) -> None:
-        self._events.appendleft(event)
-
     @workflow.query
     def get_fleet_state(self) -> FleetState:
         dispatchable_drones_count = sum(1 for d in self._drones.values() if self._is_dispatchable(d))
+        # `events` is filled in by the API layer from Redis — the workflow no longer owns it.
         return FleetState(
             drones=[self._drones[d_id] for d_id in self._drone_order],
             bases=list(DEPOTS),
             delivery_points=list(DELIVERY_POINTS),
-            events=list(self._events),
+            events=[],
             pending_orders_count=len(self._pending),
             dispatching=self._dispatching,
             dispatchable_drones_count=dispatchable_drones_count,
         )
 
-    def _append_event(self, event_type: FleetEventType, message: str) -> None:
-        self._events.appendleft(
-            FleetEvent(
-                id=workflow.uuid4().hex,
-                time=workflow.now().isoformat(),
-                type=event_type,
-                message=message,
-            )
+    async def _log_event(self, message: str, event_type: FleetEventType) -> None:
+        """Persist a fleet event through the local activity (Redis-backed)."""
+        event = FleetEvent(
+            id=workflow.uuid4().hex,
+            time=workflow.now().isoformat(),
+            type=event_type,
+            message=message,
+        )
+        await workflow.execute_local_activity(
+            log_fleet_event,
+            event,
+            start_to_close_timeout=_LOG_EVENT_TIMEOUT,
         )
 
     def _is_dispatchable(self, d: DroneRuntimeState) -> bool:

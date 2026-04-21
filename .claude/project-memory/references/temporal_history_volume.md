@@ -46,12 +46,14 @@ either total changes.
 
 ## 2. Adding state to FleetWorkflow requires extending its CAN payload
 
-`FleetWorkflow.run` takes optional
-`initial_drones`, `initial_pending`,
-`initial_events`, `initial_next_drone_idx` args
+`FleetWorkflow.run` takes optional `initial_*`
+args (currently `initial_drones`,
+`initial_pending`, `initial_next_drone_idx` —
+`initial_events` was removed when the event log
+moved to Redis; see `redis_telemetry_split.md`)
 and the CAN call at the top of the run loop
 reconstructs state from them. Every field
-Added to `__init__` that carries meaningful
+added to `__init__` that carries meaningful
 state across deliveries MUST also be:
 
 1. added as an optional `initial_*` arg on
@@ -80,15 +82,15 @@ its default every ~25 deliveries when the fleet
 CAN fires — a classic "works on my short demo,
 breaks overnight" bug.
 
-**How to apply:** treat the four `initial_*`
-params on `FleetWorkflow.run` as a checklist.
-If you touch `__init__`, search for
-`continue_as_new` in the same file and make
-sure the new field is in all three places
-above. `_drone_order` is intentionally excluded
-— it is a stable sorted list rebuilt from
-`initial_drones()` and never mutated, so the
-`__init__` version is always correct.
+**How to apply:** treat the `initial_*` params
+on `FleetWorkflow.run` as a checklist. If you
+touch `__init__`, search for `continue_as_new`
+in the same file and make sure the new field is
+in all three places above. `_drone_order` is
+intentionally excluded — it is a stable sorted
+list rebuilt from `initial_drones()` and never
+mutated, so the `__init__` version is always
+correct.
 
 ## Threshold choice
 

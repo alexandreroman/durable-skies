@@ -1,10 +1,15 @@
 ---
-name: "Redis telemetry split — raw telemetry leaves Temporal"
-description: "Why drone position/battery live in Redis instead of being pushed as Temporal signals, and which business state still stays in Temporal"
+name: "Redis split — raw telemetry + event log leave Temporal"
+description: "Why drone position/battery and the fleet event log live in Redis instead of being pushed as Temporal signals, and which business state still stays in Temporal"
 type: project
 ---
 
-# Redis telemetry split — raw telemetry leaves Temporal
+# Redis split — raw telemetry + event log leave Temporal
+
+Two high-frequency observability streams now live
+in Redis instead of Temporal history:
+
+## Drone telemetry
 
 Drone position, battery, and target_point_id are
 written to Redis by the `navigate_drone` activity
@@ -20,26 +25,54 @@ it on top of the DroneWorkflow query snapshot.
   telemetry.py` (used by both activity writers
   and the API reader)
 
+## Fleet event log
+
+The human-readable event log (takeoff, pickup,
+delivered, dispatcher decisions, etc.) is written
+to a Redis list by activities. The API reads the
+list and merges it into `GET /fleet`.
+
+- Redis key: `fleet:events` (Redis list)
+- Value per entry: JSON-serialized `FleetEvent`
+  `{id, time, type, message}`
+- Capped via `LPUSH + LTRIM 0 199` → last 200
+  entries (no TTL on the list itself)
+- Shared module: `backend/src/durable_skies/
+  events.py`
+- Activity: `log_fleet_event` in
+  `activities/fleet.py` — invoked from workflow
+  code as a **local activity** (1 marker event
+  vs 3 for a regular activity) to keep the event
+  overhead minimal when the caller is a workflow.
+- Activities call `write_fleet_event` directly
+  (non-deterministic context, no wrapper needed).
+
 **Why:** position/battery update every ~2 s per
 in-flight drone. Pushing each via `update_runtime`
 signal to DroneWorkflow was the single biggest
 contributor to event history growth on the
-long-lived entity workflows. Redis costs nothing
-in Temporal events, and a lost telemetry reading
-is recoverable (next nav step overwrites within
-2 s) — unlike losing an order assignment or a
-state transition, which are business-critical.
+long-lived entity workflows. The event log added
+~16 extra `append_event` signals to FleetWorkflow
+per delivery for pure UI observability. Redis
+costs nothing in Temporal events, and a lost
+telemetry reading or event-log line is recoverable
+(next nav step overwrites within 2 s; UI events
+are observability-only) — unlike losing an order
+assignment or a state transition, which are
+business-critical.
 
 **How to apply:** the split between "business
 state in Temporal" and "volatile telemetry in
 Redis" is load-bearing for the demo's event
 budget. Future edits must respect:
 
-1. **Telemetry writes NEVER raise.** `write_drone_
-   telemetry` swallows `RedisError` and `OSError`.
-   An activity must never abort a mission because
-   Redis flinched. If you add new telemetry fields,
-   keep the same swallow contract.
+1. **All Redis writes NEVER raise.** Both
+   `write_drone_telemetry` and `write_fleet_event`
+   swallow `RedisError` and `OSError`. An activity
+   must never abort a mission because Redis
+   flinched. If you add new telemetry fields or
+   new event-log callsites, keep the same swallow
+   contract.
 2. **Workflow determinism.** `redis.asyncio` is
    imported transitively through `telemetry.py` →
    `activities/drone.py` → `workflows/delivery.py`.
@@ -64,10 +97,11 @@ budget. Future edits must respect:
    the drone is out.
 5. **Graceful Redis degradation.** If Redis is
    down, `read_drone_telemetries` returns all
-   `None`; `/fleet` falls back to the workflow
-   query snapshot (stale position/battery but
-   correct business state). Missions keep running
-   because writes swallow errors.
+   `None` and `read_fleet_events` returns `[]`;
+   `/fleet` falls back to the workflow query
+   snapshot (stale position/battery but correct
+   business state; empty event log). Missions
+   keep running because writes swallow errors.
 6. **API overlay order:** workflow query is
    authoritative for `state`, `signals`,
    `flight_plan`, `current_order_id`. Redis is

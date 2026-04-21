@@ -1,16 +1,36 @@
 """Helpers that let activities push state updates to a per-drone `DroneWorkflow`.
 
 Activities are outside the workflow sandbox, so they connect to Temporal with
-a plain `Client` and send signals. The client is shared with `fleet_signal` to
+a plain `Client` and send signals. The client is cached per worker process to
 avoid reconnecting on every activity invocation.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
+from temporalio.client import Client
+
+from ..config import get_settings
 from ..models import Coordinate, WorkflowState
-from .fleet_signal import get_client
+
+_client: Client | None = None
+_client_lock = asyncio.Lock()
+
+
+async def get_client() -> Client:
+    global _client
+    if _client is not None:
+        return _client
+    async with _client_lock:
+        if _client is None:
+            settings = get_settings()
+            _client = await Client.connect(
+                settings.temporal_address,
+                namespace=settings.temporal_namespace,
+            )
+    return _client
 
 
 async def update_drone(

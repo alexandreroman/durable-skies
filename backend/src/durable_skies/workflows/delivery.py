@@ -7,7 +7,8 @@ action, and the workflow branches on that choice.
 
 The workflow signals the per-drone entity (`DroneWorkflow`) at each phase
 transition; the entity then forwards state to the fleet so the UI (which
-polls the fleet) stays in sync.
+polls the fleet) stays in sync. Fleet event-log entries are written to Redis
+through the `log_fleet_event` local activity — see `..events`.
 """
 
 import math
@@ -32,12 +33,15 @@ from .. import order_workflow_id
 from ..activities import (
     dropoff_package,
     land_drone,
+    log_fleet_event,
     navigate_drone,
     pickup_package,
     takeoff_drone,
 )
 from ..models import FleetEvent, FleetEventType, Order, WorkflowState
 from ..world import DELIVERY_POINTS, DEPOTS
+
+_LOG_EVENT_TIMEOUT = timedelta(seconds=5)
 
 
 @workflow.defn
@@ -54,7 +58,6 @@ class DeliveryWorkflow:
         model_name: str,
     ) -> str:
         drone_handle = workflow.get_external_workflow_handle(drone_workflow_id)
-        fleet_handle = workflow.get_external_workflow_handle(fleet_workflow_id)
 
         short = timedelta(seconds=30)
         long = timedelta(minutes=5)
@@ -137,19 +140,32 @@ class DeliveryWorkflow:
                 retry_policy=fast_retry,
             )
         except (ActivityError, ApplicationError) as err:
-            action = await self._run_anomaly_handler(drone_id, order.id, fleet_handle, model_name)
-            await self._execute_recovery(action, drone_handle, fleet_handle, drone_id, home_base_id, order)
-            await self._finalize(drone_handle, fleet_handle, drone_id, home_base_id, order.id, incident=True)
+            action = await self._run_anomaly_handler(drone_id, order.id, model_name)
+            await self._execute_recovery(action, drone_handle, drone_id, home_base_id, order)
+            await self._finalize(drone_handle, drone_id, home_base_id, order.id, incident=True)
             return f"Order {order.id} aborted ({action}): {err}"
 
-        await self._finalize(drone_handle, fleet_handle, drone_id, home_base_id, order.id, incident=False)
+        await self._finalize(drone_handle, drone_id, home_base_id, order.id, incident=False)
         return f"Order {order.id} completed"
+
+    async def _log_event(self, message: str, event_type: FleetEventType) -> None:
+        """Persist a fleet event through the local activity (Redis-backed)."""
+        event = FleetEvent(
+            id=workflow.uuid4().hex,
+            time=workflow.now().isoformat(),
+            type=event_type,
+            message=message,
+        )
+        await workflow.execute_local_activity(
+            log_fleet_event,
+            event,
+            start_to_close_timeout=_LOG_EVENT_TIMEOUT,
+        )
 
     async def _run_anomaly_handler(
         self,
         drone_id: str,
         order_id: str,
-        fleet_handle,
         model_name: str,
     ) -> str:
         """Invoke the anomaly agent; return a validated recovery action string.
@@ -192,69 +208,43 @@ class DeliveryWorkflow:
             workflow.logger.warning("Anomaly agent failed, defaulting to abort: %s", err)
             action = ACTION_ABORT
 
-        await fleet_handle.signal(
-            "append_event",
-            FleetEvent(
-                id=workflow.uuid4().hex,
-                time=workflow.now().isoformat(),
-                type=FleetEventType.INFO,
-                message=f"🤖 Recovery agent → {action}",
-            ),
-        )
+        await self._log_event(f"🤖 Recovery agent → {action}", FleetEventType.INFO)
         return action
 
     async def _execute_recovery(
         self,
         action: str,
         drone_handle,
-        fleet_handle,
         drone_id: str,
         home_base_id: str,
         order: Order,
     ) -> None:
         if action == ACTION_ABORT:
-            await self._emit_rtb(drone_handle, fleet_handle, drone_id, home_base_id, f"↩️ {drone_id} RTB")
+            await self._emit_rtb(drone_handle, drone_id, home_base_id, f"↩️ {drone_id} RTB")
         elif action == ACTION_EMERGENCY_LAND:
             nearest_id, nearest_name = self._nearest_base(order)
             await self._emit_rtb(
-                drone_handle, fleet_handle, drone_id, nearest_id,
+                drone_handle, drone_id, nearest_id,
                 f"🛬 {drone_id} emergency landing at {nearest_name}",
             )
         elif action == ACTION_DIVERT_RECHARGE:
             nearest_id, nearest_name = self._nearest_base(order)
             await self._emit_rtb(
-                drone_handle, fleet_handle, drone_id, nearest_id,
+                drone_handle, drone_id, nearest_id,
                 f"🔋 {drone_id} diverting to {nearest_name} to recharge",
             )
-            await fleet_handle.signal(
-                "append_event",
-                FleetEvent(
-                    id=workflow.uuid4().hex,
-                    time=workflow.now().isoformat(),
-                    type=FleetEventType.SIGNAL,
-                    message=f"↩️ {drone_id} returning home",
-                ),
-            )
+            await self._log_event(f"↩️ {drone_id} returning home", FleetEventType.SIGNAL)
 
     async def _emit_rtb(
         self,
         drone_handle,
-        fleet_handle,
         drone_id: str,
         target_base_id: str,
         event_message: str,
         event_type: FleetEventType = FleetEventType.SIGNAL,
     ) -> None:
         await drone_handle.signal("low_battery")
-        await fleet_handle.signal(
-            "append_event",
-            FleetEvent(
-                id=workflow.uuid4().hex,
-                time=workflow.now().isoformat(),
-                type=event_type,
-                message=event_message,
-            ),
-        )
+        await self._log_event(event_message, event_type)
         await drone_handle.signal(
             "update_runtime",
             {
@@ -285,7 +275,6 @@ class DeliveryWorkflow:
     async def _finalize(
         self,
         drone_handle,
-        fleet_handle,
         drone_id: str,
         home_base_id: str,
         order_id: str,
@@ -304,15 +293,7 @@ class DeliveryWorkflow:
         )
         if not incident:
             await drone_handle.signal("update_runtime", {"add_signal": "delivered"})
-        await fleet_handle.signal(
-            "append_event",
-            FleetEvent(
-                id=workflow.uuid4().hex,
-                time=workflow.now().isoformat(),
-                type=FleetEventType.SUCCESS,
-                message=f"🏠 {drone_id} home ✓",
-            ),
-        )
+        await self._log_event(f"🏠 {drone_id} home ✓", FleetEventType.SUCCESS)
 
         await workflow.sleep(timedelta(seconds=3))
         await drone_handle.signal(

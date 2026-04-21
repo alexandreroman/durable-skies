@@ -24,6 +24,7 @@ from temporalio.service import RPCError
 
 from .. import TASK_QUEUE, drone_workflow_id, order_workflow_id
 from ..config import get_settings
+from ..events import close_events_client, read_fleet_events
 from ..models import Coordinate, DroneRuntimeState, FleetState, Order
 from ..telemetry import close_telemetry_client, read_drone_telemetries
 from ..workflows import DroneWorkflow, FleetWorkflow, OrderWorkflow
@@ -48,7 +49,7 @@ async def lifespan(app: FastAPI):
     try:
         await client.start_workflow(
             FleetWorkflow.run,
-            args=[settings.anthropic_model, None, None, None, 0, settings.anthropic_fast_model],
+            args=[settings.anthropic_model, None, None, 0, settings.anthropic_fast_model],
             id=FLEET_WORKFLOW_ID,
             task_queue=TASK_QUEUE,
         )
@@ -82,6 +83,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await close_telemetry_client()
+        await close_events_client()
 
 
 app = FastAPI(title="durable-skies", lifespan=lifespan)
@@ -139,15 +141,17 @@ async def get_fleet() -> FleetState:
     fleet_handle = client.get_workflow_handle(FLEET_WORKFLOW_ID)
 
     # Queries need a live worker; cap the wait so a worker restart doesn't freeze the UI poll loop.
-    # The fleet query is authoritative for events/bases/pending_orders_count and business-state
-    # fields (state enum, signals, flight_plan). Per-drone queries pull flight_plan + business
-    # state; Redis telemetry provides live position/battery on top. Fire everything in parallel.
+    # The fleet query is authoritative for bases/pending_orders_count and business-state fields
+    # (state enum, signals, flight_plan). Per-drone queries pull flight_plan + business state;
+    # Redis telemetry provides live position/battery on top; the fleet event log comes from Redis
+    # as well. Fire everything in parallel.
     drone_ids = [drone_id for drone_id, _name, _base_id, _loc in initial_drone_startups()]
     fleet_task = asyncio.create_task(asyncio.wait_for(fleet_handle.query(FleetWorkflow.get_fleet_state), timeout=2.0))
     drone_tasks: dict[str, asyncio.Task[DroneRuntimeState | None]] = {
         drone_id: asyncio.create_task(_query_drone(client, drone_id)) for drone_id in drone_ids
     }
     telemetry_task = asyncio.create_task(read_drone_telemetries(drone_ids))
+    events_task = asyncio.create_task(read_fleet_events())
 
     try:
         fleet_state = await fleet_task
@@ -155,21 +159,23 @@ async def get_fleet() -> FleetState:
         for task in drone_tasks.values():
             task.cancel()
         telemetry_task.cancel()
+        events_task.cancel()
         log.warning("Fleet query timed out; worker may be unavailable")
         raise HTTPException(status_code=503, detail="fleet query timed out — worker may be unavailable") from err
     except WorkflowFailureError as err:  # workflow failed: surface as 503
         for task in drone_tasks.values():
             task.cancel()
         telemetry_task.cancel()
+        events_task.cancel()
         raise HTTPException(status_code=503, detail=str(err)) from err
 
-    await asyncio.gather(*drone_tasks.values(), telemetry_task)
+    await asyncio.gather(*drone_tasks.values(), telemetry_task, events_task)
     telemetries = telemetry_task.result()
     merged = [
         _overlay_telemetry(drone_tasks[d.id].result() or d, telemetries.get(d.id)) if d.id in drone_tasks else d
         for d in fleet_state.drones
     ]
-    return fleet_state.model_copy(update={"drones": merged})
+    return fleet_state.model_copy(update={"drones": merged, "events": events_task.result()})
 
 
 @app.post("/orders")

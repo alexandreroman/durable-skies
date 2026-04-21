@@ -8,20 +8,24 @@ needs:
 - Live telemetry (position, battery, target_point_id): written to Redis per
   nav step. The FastAPI gateway merges it into `/fleet`. Redis is best-effort —
   a failed write never breaks a mission.
+- Fleet event log (takeoff/pickup/delivery notifications): written directly
+  to Redis via `write_fleet_event`. Same best-effort contract.
 
 The ADK pilot agent (running inside the per-delivery workflow) invokes these
 activities through `activity_tool`.
 """
 
 import asyncio
+import uuid
+from datetime import UTC, datetime
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from ..models import Coordinate, FleetEventType, WorkflowState
+from ..events import write_fleet_event
+from ..models import Coordinate, FleetEvent, FleetEventType, WorkflowState
 from ..telemetry import write_drone_telemetry
 from .drone_signal import advance_leg, update_drone
-from .fleet_signal import append_event
 from .world import resolve_location, resolve_name
 
 _NAV_STEPS = 6
@@ -34,10 +38,19 @@ def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
+def _event(message: str, event_type: FleetEventType = FleetEventType.INFO) -> FleetEvent:
+    return FleetEvent(
+        id=uuid.uuid4().hex,
+        time=datetime.now(UTC).isoformat(),
+        type=event_type,
+        message=message,
+    )
+
+
 @activity.defn
 async def takeoff_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id: str) -> str:
     activity.logger.info("Drone %s taking off", drone_id)
-    await append_event(fleet_workflow_id, f"🛫 {drone_id} takeoff", FleetEventType.INFO)
+    await write_fleet_event(_event(f"🛫 {drone_id} takeoff"))
     await asyncio.sleep(1.5)
     await update_drone(drone_workflow_id, state=WorkflowState.IN_FLIGHT)
     await advance_leg(drone_workflow_id)
@@ -47,7 +60,7 @@ async def takeoff_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id
 @activity.defn
 async def land_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id: str) -> str:
     activity.logger.info("Drone %s landing", drone_id)
-    await append_event(fleet_workflow_id, f"🛬 {drone_id} landing", FleetEventType.INFO)
+    await write_fleet_event(_event(f"🛬 {drone_id} landing"))
     await asyncio.sleep(1.0)
     await advance_leg(drone_workflow_id)
     return f"Drone {drone_id} has landed"
@@ -112,20 +125,14 @@ async def navigate_drone(
                 battery_pct=battery,
                 add_signal="battery_critical",
             )
-            await append_event(
-                fleet_workflow_id,
-                f"⚠️ {drone_id} battery {battery:.0f}%",
-                FleetEventType.INCIDENT,
+            await write_fleet_event(
+                _event(f"⚠️ {drone_id} battery {battery:.0f}%", FleetEventType.INCIDENT),
             )
             raise ApplicationError("battery_critical", non_retryable=True)
 
         await asyncio.sleep(_NAV_STEP_DELAY_S)
 
-    await append_event(
-        fleet_workflow_id,
-        f"📍 {drone_id} → {resolve_name(to_point_id)}",
-        FleetEventType.INFO,
-    )
+    await write_fleet_event(_event(f"📍 {drone_id} → {resolve_name(to_point_id)}"))
     await update_drone(drone_workflow_id, battery_pct=battery)
     await advance_leg(drone_workflow_id)
     return battery
@@ -140,10 +147,8 @@ async def pickup_package(
     fleet_workflow_id: str,
 ) -> str:
     activity.logger.info("Drone %s picking up order %s at %s", drone_id, order_id, base_id)
-    await append_event(
-        fleet_workflow_id,
-        f"📦 {drone_id} pickup {resolve_name(base_id)}",
-        FleetEventType.SIGNAL,
+    await write_fleet_event(
+        _event(f"📦 {drone_id} pickup {resolve_name(base_id)}", FleetEventType.SIGNAL),
     )
     await asyncio.sleep(1.0)
     await advance_leg(drone_workflow_id)
@@ -160,11 +165,7 @@ async def dropoff_package(
 ) -> str:
     activity.logger.info("Drone %s delivering order %s at %s", drone_id, order_id, dropoff_point_id)
     await update_drone(drone_workflow_id, state=WorkflowState.DELIVERING, add_signal="delivered")
-    await append_event(
-        fleet_workflow_id,
-        f"✅ {drone_id} delivered",
-        FleetEventType.SUCCESS,
-    )
+    await write_fleet_event(_event(f"✅ {drone_id} delivered", FleetEventType.SUCCESS))
     await asyncio.sleep(1.0)
     await advance_leg(drone_workflow_id)
     return f"Order {order_id} delivered at {dropoff_point_id}"

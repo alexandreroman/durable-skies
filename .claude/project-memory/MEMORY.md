@@ -17,5 +17,5 @@
 - [Long-lived workflow signature migration](references/workflow_signature_migration.md) — adding required args to FleetWorkflow/DroneWorkflow.run needs optional defaults or terminate+restart
 - [Temporal history volume invariants](references/temporal_history_volume.md) — nav cadence triplet must move together; new FleetWorkflow state must be threaded through the CAN payload
 - [Fleet push/pull split](references/fleet_push_pull_split.md) — drones push state-enum transitions only; API pulls flight_plan/state/signals from each DroneWorkflow at /fleet time
-- [Redis telemetry split](references/redis_telemetry_split.md) — position/battery live in Redis (10s TTL), not Temporal; telemetry writes must never raise and RETURNING state moves with DeliveryWorkflow
+- [Redis split: telemetry + event log](references/redis_telemetry_split.md) — position/battery (10s TTL) and fleet event log (LTRIM 200) live in Redis, not Temporal; all Redis writes must never raise
 - [Progressive charging + 40% dispatch gate + CHARGING state](references/progressive_charging_and_dispatch_gate.md) — battery carries via DroneWorkflow sleep loop; dispatcher filters on > 40%; at-home drones split IDLE/CHARGING

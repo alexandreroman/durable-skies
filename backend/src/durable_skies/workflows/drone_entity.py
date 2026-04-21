@@ -110,9 +110,13 @@ class DroneWorkflow:
                 await workflow.sleep(timedelta(seconds=_CHARGE_STEP_DELAY_S))
                 if self._pending_order is not None or self._shutdown:
                     break
+                prev_state = self._state
                 self._battery_pct = min(100.0, self._battery_pct + _CHARGE_STEP_PCT)
                 self._state = self._idle_state()
-                await self._sync_to_fleet()
+                # Only sync on state enum transitions (CHARGING -> IDLE at 40%); battery ticks
+                # are published via the API's pull path to avoid re-inflating event history.
+                if self._state != prev_state:
+                    await self._sync_to_fleet()
 
             # Battery is full (or we bailed out); wait for the order/shutdown or a
             # battery drop that should re-trigger charging (e.g. a test signal).
