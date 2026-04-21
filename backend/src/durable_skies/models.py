@@ -81,6 +81,9 @@ class DroneRuntimeState(BaseModel):
     signals: list[str] = Field(default_factory=list)
     target_point_id: str | None = None
     flight_plan: FlightPlan | None = None
+    # Operator-intent flag, orthogonal to `state`: a paused drone may be in any state,
+    # and is filtered out of dispatch eligibility until resumed.
+    paused: bool = False
 
 
 class DroneAvailability(BaseModel):
@@ -98,6 +101,7 @@ class DroneAvailability(BaseModel):
     battery_pct: float = Field(ge=0, le=100)
     current_order_id: str | None = None
     updated_at: str  # ISO-8601 UTC
+    paused: bool = False
 
 
 class OrderStatus(StrEnum):

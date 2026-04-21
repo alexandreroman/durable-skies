@@ -63,6 +63,7 @@ export interface Drone {
   current_order_id: string | null;
   signals: string[];
   flight_plan: FlightPlan | null;
+  paused: boolean;
 }
 
 export interface FleetEvent {

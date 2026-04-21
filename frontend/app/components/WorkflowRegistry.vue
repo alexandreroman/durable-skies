@@ -21,7 +21,12 @@ const props = defineProps<{
   dispatchableCount: number;
 }>();
 
-const emit = defineEmits<{ select: [id: string | null]; hover: [id: string | null] }>();
+const emit = defineEmits<{
+  select: [id: string | null];
+  hover: [id: string | null];
+  pause: [id: string];
+  resume: [id: string];
+}>();
 
 const baseById = computed(() => new Map(props.bases.map((b) => [b.id, b])));
 
@@ -70,7 +75,7 @@ function orderLabel(orderId: string): string {
         v-for="drone in drones"
         :key="drone.id"
         class="ds-wf-row"
-        :class="{ 'is-selected': selectedDrone === drone.id }"
+        :class="{ 'is-selected': selectedDrone === drone.id, 'is-paused': drone.paused }"
         :style="{
           borderLeft:
             selectedDrone === drone.id
@@ -187,40 +192,50 @@ function orderLabel(orderId: string): string {
           </span>
         </div>
 
-        <div class="ds-plan-track mt-1.5">
-          <template v-if="drone.flight_plan">
-            <template v-for="(leg, i) in drone.flight_plan.legs" :key="i">
-              <span
-                class="ds-plan-step"
-                :class="[
-                  `is-${leg.status}`,
-                  { 'is-divert': leg.kind === 'divert_to_base' },
-                ]"
-                :style="
-                  leg.status === 'active'
-                    ? {
-                        background:
-                          leg.kind === 'divert_to_base'
-                            ? WORKFLOW_STATES.INCIDENT.color
-                            : WORKFLOW_STATES[drone.state].color,
-                        borderColor:
-                          leg.kind === 'divert_to_base'
-                            ? WORKFLOW_STATES.INCIDENT.color
-                            : WORKFLOW_STATES[drone.state].color,
-                      }
-                    : leg.kind === 'divert_to_base'
-                      ? { borderColor: WORKFLOW_STATES.INCIDENT.color, color: WORKFLOW_STATES.INCIDENT.color }
-                      : {}
-                "
-                :title="LEG_LABELS[leg.kind]"
-              />
-              <span
-                v-if="i < drone.flight_plan.legs.length - 1"
-                class="ds-plan-link"
-                :class="{ 'is-done': leg.status === 'done' }"
-              />
+        <div class="mt-1.5 flex items-center gap-2">
+          <div class="ds-plan-track flex-1 min-w-0">
+            <template v-if="drone.flight_plan">
+              <template v-for="(leg, i) in drone.flight_plan.legs" :key="i">
+                <span
+                  class="ds-plan-step"
+                  :class="[
+                    `is-${leg.status}`,
+                    { 'is-divert': leg.kind === 'divert_to_base' },
+                  ]"
+                  :style="
+                    leg.status === 'active'
+                      ? {
+                          background:
+                            leg.kind === 'divert_to_base'
+                              ? WORKFLOW_STATES.INCIDENT.color
+                              : WORKFLOW_STATES[drone.state].color,
+                          borderColor:
+                            leg.kind === 'divert_to_base'
+                              ? WORKFLOW_STATES.INCIDENT.color
+                              : WORKFLOW_STATES[drone.state].color,
+                        }
+                      : leg.kind === 'divert_to_base'
+                        ? { borderColor: WORKFLOW_STATES.INCIDENT.color, color: WORKFLOW_STATES.INCIDENT.color }
+                        : {}
+                  "
+                  :title="LEG_LABELS[leg.kind]"
+                />
+                <span
+                  v-if="i < drone.flight_plan.legs.length - 1"
+                  class="ds-plan-link"
+                  :class="{ 'is-done': leg.status === 'done' }"
+                />
+              </template>
             </template>
-          </template>
+          </div>
+          <button
+            class="ds-pause-btn"
+            :title="drone.paused ? 'Resume drone' : 'Pause drone'"
+            :aria-label="drone.paused ? 'Resume drone' : 'Pause drone'"
+            @click.stop="drone.paused ? emit('resume', drone.id) : emit('pause', drone.id)"
+          >
+            {{ drone.paused ? "▶" : "⏸" }}
+          </button>
         </div>
       </div>
     </div>
@@ -232,6 +247,52 @@ function orderLabel(orderId: string): string {
   flex-shrink: 0;
   display: inline-block;
   vertical-align: middle;
+}
+
+.ds-wf-row.is-paused {
+  opacity: 0.72;
+}
+
+.ds-wf-row.is-paused .ds-wf-name {
+  color: var(--ds-text-dim);
+}
+
+.ds-wf-row.is-paused:hover .ds-pause-btn,
+.ds-wf-row.is-paused .ds-pause-btn:focus-visible {
+  opacity: calc(1 / 0.72);
+}
+
+.ds-pause-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 5px;
+  border: 1px solid var(--ds-divider);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ds-text-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  opacity: 0;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease, opacity 120ms ease;
+}
+
+.ds-wf-row:hover .ds-pause-btn {
+  opacity: 1;
+}
+
+.ds-pause-btn:focus-visible {
+  opacity: 1;
+}
+
+.ds-pause-btn:hover {
+  color: var(--ds-text);
+  border-color: color-mix(in srgb, var(--ds-text) 35%, var(--ds-divider));
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .ds-plan-track {

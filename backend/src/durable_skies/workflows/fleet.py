@@ -231,7 +231,7 @@ class FleetWorkflow:
         )
 
     def _is_dispatchable(self, a: DroneAvailability) -> bool:
-        return a.state == WorkflowState.IDLE and a.battery_pct > _MIN_DISPATCH_BATTERY_PCT
+        return a.state == WorkflowState.IDLE and a.battery_pct > _MIN_DISPATCH_BATTERY_PCT and not a.paused
 
     def _pick_idle_drone(self, dispatchable: list[DroneAvailability]) -> str | None:
         """Deterministic fallback: first candidate by sorted drone_id.

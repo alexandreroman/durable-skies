@@ -17,11 +17,13 @@ from temporalio import workflow
 from temporalio.exceptions import ChildWorkflowError
 
 from .. import TASK_QUEUE
-from ..activities import write_drone_availability_activity
+from ..activities import log_fleet_event, write_drone_availability_activity
 from ..models import (
     Coordinate,
     DroneAvailability,
     DroneRuntimeState,
+    FleetEvent,
+    FleetEventType,
     FlightLeg,
     FlightLegKind,
     FlightLegStatus,
@@ -37,6 +39,7 @@ _CHARGE_STEP_DELAY_S = 2.0
 # Must match fleet._MIN_DISPATCH_BATTERY_PCT — see progressive_charging_and_dispatch_gate memory.
 _MIN_DISPATCH_BATTERY_PCT = 40.0
 _PUBLISH_TIMEOUT = timedelta(seconds=5)
+_LOG_EVENT_TIMEOUT = timedelta(seconds=5)
 
 
 def _build_flight_plan(order: Order, home_base_id: str) -> FlightPlan:
@@ -78,6 +81,7 @@ class DroneWorkflow:
         self._current_delivery_workflow_id: str | None = None
         self._pending_order: Order | None = None
         self._shutdown: bool = False
+        self._paused: bool = False
 
     @workflow.run
     async def run(
@@ -88,6 +92,7 @@ class DroneWorkflow:
         home_location: Coordinate,
         model_name: str,
         initial_battery_pct: float = 100.0,
+        initial_paused: bool = False,
     ) -> None:
         home_location = Coordinate.model_validate(home_location)
         self._drone_id = drone_id
@@ -96,6 +101,7 @@ class DroneWorkflow:
         self._home_location = home_location
         self._position = home_location.model_copy()
         self._battery_pct = initial_battery_pct
+        self._paused = initial_paused
         self._state = self._idle_state()
 
         # Publish an initial availability snapshot BEFORE the first wait_condition
@@ -175,6 +181,7 @@ class DroneWorkflow:
                         home_location,
                         model_name,
                         self._battery_pct,
+                        self._paused,
                     ],
                 )
 
@@ -249,6 +256,22 @@ class DroneWorkflow:
     def shutdown(self) -> None:
         self._shutdown = True
 
+    @workflow.signal
+    async def pause_drone(self) -> None:
+        if self._paused:
+            return
+        self._paused = True
+        await self._log_event(f"⏸ {self._name} paused", FleetEventType.INFO)
+        await self._publish_availability()
+
+    @workflow.signal
+    async def resume_drone(self) -> None:
+        if not self._paused:
+            return
+        self._paused = False
+        await self._log_event(f"▶ {self._name} resumed", FleetEventType.INFO)
+        await self._publish_availability()
+
     @workflow.query
     def get_drone_state(self) -> DroneRuntimeState:
         return self._snapshot()
@@ -273,6 +296,7 @@ class DroneWorkflow:
             signals=list(self._signals),
             target_point_id=self._target_point_id,
             flight_plan=self._flight_plan,
+            paused=self._paused,
         )
 
     async def _publish_availability(self) -> None:
@@ -288,9 +312,24 @@ class DroneWorkflow:
             battery_pct=self._battery_pct,
             current_order_id=self._current_order.id if self._current_order else None,
             updated_at=workflow.now().isoformat(),
+            paused=self._paused,
         )
         await workflow.execute_local_activity(
             write_drone_availability_activity,
             availability,
             start_to_close_timeout=_PUBLISH_TIMEOUT,
+        )
+
+    async def _log_event(self, message: str, event_type: FleetEventType) -> None:
+        """Persist a fleet event through the local activity (Redis-backed)."""
+        event = FleetEvent(
+            id=workflow.uuid4().hex,
+            time=workflow.now().isoformat(),
+            type=event_type,
+            message=message,
+        )
+        await workflow.execute_local_activity(
+            log_fleet_event,
+            event,
+            start_to_close_timeout=_LOG_EVENT_TIMEOUT,
         )

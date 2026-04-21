@@ -75,6 +75,22 @@ export function useFleet() {
     }
   }
 
+  async function pauseDrone(id: string): Promise<void> {
+    try {
+      await $fetch(`${config.public.apiBase}/drones/${id}/pause`, { method: "POST" });
+    } catch {
+      // swallow: next poll will retry
+    }
+  }
+
+  async function resumeDrone(id: string): Promise<void> {
+    try {
+      await $fetch(`${config.public.apiBase}/drones/${id}/resume`, { method: "POST" });
+    } catch {
+      // swallow: next poll will retry
+    }
+  }
+
   onMounted(() => {
     stopped = false;
     void loop();
@@ -101,5 +117,7 @@ export function useFleet() {
     selectDrone,
     setHoveredDrone,
     submitOrder,
+    pauseDrone,
+    resumeDrone,
   };
 }

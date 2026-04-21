@@ -15,6 +15,8 @@ const {
   selectDrone,
   setHoveredDrone,
   submitOrder,
+  pauseDrone,
+  resumeDrone,
 } = useFleet();
 
 const mapFocusedDrone = computed(() => {
@@ -107,6 +109,8 @@ const mapFocusedDrone = computed(() => {
           :dispatchable-count="dispatchableCount"
           @select="(id) => selectDrone(id)"
           @hover="(id) => setHoveredDrone(id)"
+          @pause="(id) => pauseDrone(id)"
+          @resume="(id) => resumeDrone(id)"
         />
         <Transition name="ds-event-log">
           <EventLog v-if="events.length > 0" class="h-[200px]" :events="events" />

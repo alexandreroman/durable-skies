@@ -183,7 +183,11 @@ async def get_fleet() -> FleetState:
         queried = drone_tasks[drone_id].result() or base
         merged.append(_overlay_telemetry(queried, telemetries.get(drone_id)))
 
-    dispatchable = sum(1 for d in merged if d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT)
+    dispatchable = sum(
+        1
+        for d in merged
+        if d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT and not d.paused
+    )
     return fleet_state.model_copy(
         update={
             "drones": merged,
@@ -206,6 +210,29 @@ async def submit_order(order: Order) -> dict[str, str]:
             task_queue=TASK_QUEUE,
         )
     return {"workflow_id": wf_id, "order_id": order.id}
+
+
+def _assert_known_drone(drone_id: str) -> None:
+    if not any(d.id == drone_id for d in initial_drones()):
+        raise HTTPException(status_code=404, detail=f"unknown drone id: {drone_id}")
+
+
+@app.post("/drones/{drone_id}/pause")
+async def pause_drone(drone_id: str) -> dict[str, bool]:
+    _assert_known_drone(drone_id)
+    client: Client = app.state.client
+    handle = client.get_workflow_handle(drone_workflow_id(drone_id))
+    await handle.signal("pause_drone")
+    return {"ok": True}
+
+
+@app.post("/drones/{drone_id}/resume")
+async def resume_drone(drone_id: str) -> dict[str, bool]:
+    _assert_known_drone(drone_id)
+    client: Client = app.state.client
+    handle = client.get_workflow_handle(drone_workflow_id(drone_id))
+    await handle.signal("resume_drone")
+    return {"ok": True}
 
 
 class _QuietPollingAccessFilter(logging.Filter):
