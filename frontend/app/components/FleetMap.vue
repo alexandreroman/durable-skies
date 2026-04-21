@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { Base, DeliveryPoint, Drone } from "../types/fleet";
 import { WORKFLOW_STATES, latLngToXY } from "../composables/fleetConstants";
 
@@ -13,6 +13,79 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [id: string | null] }>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
+
+// Client-side tween state. The backend polls every 500 ms and replaces the
+// `drones` prop wholesale, which would make drones jump between snapshots.
+// We keep a non-reactive Map of per-drone tweens and lerp between the last
+// rendered position and the newly-polled target over TWEEN_DURATION_MS.
+// The map is mutated in place — this is a render-layer concern, not
+// application state, so it deliberately sits outside Vue's reactivity.
+const TWEEN_DURATION_MS = 500;
+
+interface TweenEntry {
+  fromLat: number;
+  fromLon: number;
+  targetLat: number;
+  targetLon: number;
+  startedAt: number;
+}
+
+const tweens = new Map<string, TweenEntry>();
+
+function tweenProgress(entry: TweenEntry, now: number): number {
+  if (entry.startedAt === 0) return 1;
+  return Math.min(1, Math.max(0, (now - entry.startedAt) / TWEEN_DURATION_MS));
+}
+
+function renderedPosition(droneId: string, now: number): { lat: number; lon: number } {
+  const entry = tweens.get(droneId);
+  if (!entry) {
+    // Defensive fallback: the watcher should have populated the map already.
+    const drone = props.drones.find((d) => d.id === droneId);
+    return drone ? { lat: drone.position.lat, lon: drone.position.lon } : { lat: 0, lon: 0 };
+  }
+  const t = tweenProgress(entry, now);
+  return {
+    lat: entry.fromLat + (entry.targetLat - entry.fromLat) * t,
+    lon: entry.fromLon + (entry.targetLon - entry.fromLon) * t,
+  };
+}
+
+watch(
+  () => props.drones,
+  (incoming) => {
+    const now = performance.now();
+    const seen = new Set<string>();
+    for (const drone of incoming) {
+      seen.add(drone.id);
+      const entry = tweens.get(drone.id);
+      if (!entry) {
+        tweens.set(drone.id, {
+          fromLat: drone.position.lat,
+          fromLon: drone.position.lon,
+          targetLat: drone.position.lat,
+          targetLon: drone.position.lon,
+          startedAt: 0,
+        });
+        continue;
+      }
+      if (drone.position.lat !== entry.targetLat || drone.position.lon !== entry.targetLon) {
+        const t = tweenProgress(entry, now);
+        const currentLat = entry.fromLat + (entry.targetLat - entry.fromLat) * t;
+        const currentLon = entry.fromLon + (entry.targetLon - entry.fromLon) * t;
+        entry.fromLat = currentLat;
+        entry.fromLon = currentLon;
+        entry.targetLat = drone.position.lat;
+        entry.targetLon = drone.position.lon;
+        entry.startedAt = now;
+      }
+    }
+    for (const id of tweens.keys()) {
+      if (!seen.has(id)) tweens.delete(id);
+    }
+  },
+  { deep: true, immediate: true },
+);
 
 const legendStates = Object.entries(WORKFLOW_STATES).filter(([k]) => k !== "IDLE") as Array<
   [string, (typeof WORKFLOW_STATES)[keyof typeof WORKFLOW_STATES]]
@@ -69,6 +142,8 @@ function draw(): void {
 
   ctx.clearRect(0, 0, W, H);
 
+  const now = performance.now();
+
   ctx.strokeStyle = "rgba(124,92,255,0.05)";
   ctx.lineWidth = 1;
   for (let x = 0; x < W; x += 40) {
@@ -123,7 +198,8 @@ function draw(): void {
 
   for (const drone of props.drones) {
     if (drone.state === "IDLE" || drone.state === "COMPLETED") continue;
-    const pos = latLngToXY(drone.position.lat, drone.position.lon, W, H);
+    const rendered = renderedPosition(drone.id, now);
+    const pos = latLngToXY(rendered.lat, rendered.lon, W, H);
 
     const home = props.bases.find((b) => b.id === drone.home_base_id);
     const target = findPointCoord(drone.target_point_id);
@@ -232,9 +308,11 @@ function handleClick(event: MouseEvent): void {
   // both in CSS pixels, so no scale factor is needed.
   const mx = event.clientX - rect.left;
   const my = event.clientY - rect.top;
+  const now = performance.now();
   let found: string | null = null;
   for (const drone of props.drones) {
-    const { x, y } = latLngToXY(drone.position.lat, drone.position.lon, rect.width, rect.height);
+    const rendered = renderedPosition(drone.id, now);
+    const { x, y } = latLngToXY(rendered.lat, rendered.lon, rect.width, rect.height);
     if (Math.hypot(x - mx, y - my) < 16) found = drone.id;
   }
   emit("select", found);
