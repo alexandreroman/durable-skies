@@ -8,6 +8,7 @@ export function useFleet() {
   const bases = ref<Base[]>([]);
   const deliveryPoints = ref<DeliveryPoint[]>([]);
   const events = ref<FleetEvent[]>([]);
+  const pendingOrdersCount = ref(0);
   const selectedDrone = ref<string | null>(null);
 
   const config = useRuntimeConfig();
@@ -21,6 +22,7 @@ export function useFleet() {
       bases.value = state.bases;
       deliveryPoints.value = state.delivery_points;
       events.value = state.events;
+      pendingOrdersCount.value = state.pending_orders_count ?? 0;
     } catch {
       // swallow: next poll will retry
     }
@@ -45,7 +47,7 @@ export function useFleet() {
         : undefined;
 
     const order = {
-      id: `order-${Date.now()}`,
+      id: `${Date.now()}`,
       pickup_base_id: pickupBase?.id ?? "base-north",
       dropoff_point_id: dropoff?.id ?? "dp-1",
       payload_kg: 1.2,
@@ -79,6 +81,7 @@ export function useFleet() {
     bases,
     deliveryPoints,
     events,
+    pendingOrdersCount,
     selectedDrone,
     selectDrone,
     submitOrder,

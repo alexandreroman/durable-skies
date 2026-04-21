@@ -19,10 +19,10 @@ from temporalio.client import Client, WorkflowFailureError
 from temporalio.contrib.google_adk_agents import GoogleAdkPlugin
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from .. import TASK_QUEUE, drone_workflow_id
+from .. import TASK_QUEUE, drone_workflow_id, order_workflow_id
 from ..config import get_settings
 from ..models import FleetState, Order
-from ..workflows import DroneWorkflow, FleetWorkflow
+from ..workflows import DroneWorkflow, FleetWorkflow, OrderWorkflow
 from ..world import initial_drone_startups
 
 FLEET_WORKFLOW_ID = "fleet-supervisor"
@@ -105,9 +105,18 @@ async def get_fleet() -> FleetState:
 @app.post("/orders")
 async def submit_order(order: Order) -> dict[str, str]:
     client: Client = app.state.client
-    handle = client.get_workflow_handle(FLEET_WORKFLOW_ID)
-    await handle.signal("submit_order", order)
-    return {"workflow_id": FLEET_WORKFLOW_ID, "order_id": order.id}
+    wf_id = order_workflow_id(order.id)
+    try:
+        await client.start_workflow(
+            OrderWorkflow.run,
+            args=[order, FLEET_WORKFLOW_ID],
+            id=wf_id,
+            task_queue=TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        # Re-POSTing the same order id is a no-op.
+        pass
+    return {"workflow_id": wf_id, "order_id": order.id}
 
 
 class _QuietPollingAccessFilter(logging.Filter):

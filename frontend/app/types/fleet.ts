@@ -77,6 +77,7 @@ export interface FleetState {
   bases: Base[];
   delivery_points: DeliveryPoint[];
   events: FleetEvent[];
+  pending_orders_count: number;
 }
 
 export interface WorkflowStateStyle {

@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { useFleet } from "./composables/useFleet";
 
-const { drones, bases, deliveryPoints, events, selectedDrone, selectDrone, submitOrder } =
-  useFleet();
+const {
+  drones,
+  bases,
+  deliveryPoints,
+  events,
+  pendingOrdersCount,
+  selectedDrone,
+  selectDrone,
+  submitOrder,
+} = useFleet();
 </script>
 
 <template>
@@ -42,10 +50,21 @@ const { drones, bases, deliveryPoints, events, selectedDrone, selectDrone, submi
         </div>
       </div>
 
-      <button class="ds-submit-button ml-auto" @click="submitOrder()">
-        <span class="ds-submit-plus">+</span>
-        <span>Submit order</span>
-      </button>
+      <div class="ml-auto flex items-center gap-3">
+        <span
+          v-if="pendingOrdersCount > 0"
+          class="ds-queue-pill"
+          :title="`${pendingOrdersCount} order${pendingOrdersCount === 1 ? '' : 's'} waiting for a drone`"
+        >
+          <span aria-hidden="true">📦</span>
+          <span class="ds-queue-num">{{ pendingOrdersCount }}</span>
+          <span>queued</span>
+        </span>
+        <button class="ds-submit-button" @click="submitOrder()">
+          <span class="ds-submit-plus">+</span>
+          <span>Submit order</span>
+        </button>
+      </div>
     </header>
 
     <div class="flex flex-1 overflow-hidden">
@@ -69,3 +88,26 @@ const { drones, bases, deliveryPoints, events, selectedDrone, selectDrone, submi
     </div>
   </div>
 </template>
+
+<style scoped>
+.ds-queue-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--ds-divider);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ds-text);
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  user-select: none;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.ds-queue-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ds-violet);
+}
+</style>

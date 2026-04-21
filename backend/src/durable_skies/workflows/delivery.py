@@ -19,6 +19,7 @@ from temporalio.exceptions import ActivityError, ApplicationError
 with workflow.unsafe.imports_passed_through():
     from ..agents.drone import build_drone_agent
 
+from .. import order_workflow_id
 from ..models import FleetEvent, FleetEventType, Order, WorkflowState
 from ..world import DEPOTS
 
@@ -63,10 +64,10 @@ class DeliveryWorkflow:
                 pass
         except (ApplicationError, ActivityError) as err:
             await self._compensate(drone_handle, fleet_handle, drone_id, home_base_id)
-            await self._finalize(drone_handle, fleet_handle, drone_id, home_base_id, incident=True)
+            await self._finalize(drone_handle, fleet_handle, drone_id, home_base_id, order.id, incident=True)
             return f"Order {order.id} aborted: {err}"
 
-        await self._finalize(drone_handle, fleet_handle, drone_id, home_base_id, incident=False)
+        await self._finalize(drone_handle, fleet_handle, drone_id, home_base_id, order.id, incident=False)
         return f"Order {order.id} completed"
 
     async def _compensate(self, drone_handle, fleet_handle, drone_id: str, home_base_id: str) -> None:
@@ -99,6 +100,7 @@ class DeliveryWorkflow:
         fleet_handle,
         drone_id: str,
         home_base_id: str,
+        order_id: str,
         *,
         incident: bool,
     ) -> None:
@@ -135,3 +137,7 @@ class DeliveryWorkflow:
                 "clear_signals": True,
             },
         )
+
+        order_handle = workflow.get_external_workflow_handle(order_workflow_id(order_id))
+        message = f"Order {order_id} aborted" if incident else f"Order {order_id} delivered"
+        await order_handle.signal("delivery_done", args=[not incident, message])

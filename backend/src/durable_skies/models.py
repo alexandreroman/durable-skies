@@ -119,3 +119,4 @@ class FleetState(BaseModel):
     bases: list[Base]
     delivery_points: list[DeliveryPoint]
     events: list[FleetEvent]  # newest first, up to 40
+    pending_orders_count: int = 0

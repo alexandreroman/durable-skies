@@ -8,3 +8,8 @@ TASK_QUEUE = "durable-skies"
 def drone_workflow_id(drone_id: str) -> str:
     """Canonical workflow id for a per-drone long-lived entity workflow."""
     return f"drone-{drone_id.lower()}"
+
+
+def order_workflow_id(order_id: str) -> str:
+    """Canonical workflow id for a per-order OrderWorkflow."""
+    return f"order-{order_id}"

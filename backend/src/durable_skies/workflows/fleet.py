@@ -120,6 +120,7 @@ class FleetWorkflow:
             bases=list(DEPOTS),
             delivery_points=list(DELIVERY_POINTS),
             events=list(self._events),
+            pending_orders_count=len(self._pending),
         )
 
     def _append_event(self, event_type: FleetEventType, message: str) -> None:
