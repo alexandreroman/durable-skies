@@ -7,7 +7,7 @@ const { drones, bases, deliveryPoints, events, selectedDrone, selectDrone, submi
 
 <template>
   <div class="flex h-screen flex-col">
-    <header class="ds-header flex items-center gap-4 px-5">
+    <header class="ds-header flex items-center gap-4 pl-5 pr-3">
       <div class="flex items-center gap-3">
         <!-- Hexagonal drone badge -->
         <svg
@@ -61,7 +61,6 @@ const { drones, bases, deliveryPoints, events, selectedDrone, selectDrone, submi
           class="flex-1 min-h-0"
           :drones="drones"
           :bases="bases"
-          :delivery-points="deliveryPoints"
           :selected-drone="selectedDrone"
           @select="(id) => selectDrone(id)"
         />
