@@ -31,13 +31,36 @@ function messageColor(type: FleetEvent["type"]): string {
       <span class="ds-section-label">Event Log</span>
     </div>
     <div class="flex-1 overflow-y-auto">
-      <div v-for="event in events" :key="event.id" class="ds-event-row">
-        <span class="ds-event-time">{{ formatTime(event.time) }}</span>
-        <span class="ds-event-bar" :style="{ background: colorFor(event.type) }" />
-        <span class="ds-event-message" :style="{ color: messageColor(event.type) }">
-          {{ event.message }}
-        </span>
-      </div>
+      <TransitionGroup name="ds-event-row" tag="div">
+        <div v-for="event in events" :key="event.id" class="ds-event-row">
+          <span class="ds-event-time">{{ formatTime(event.time) }}</span>
+          <span class="ds-event-bar" :style="{ background: colorFor(event.type) }" />
+          <span class="ds-event-message" :style="{ color: messageColor(event.type) }">
+            {{ event.message }}
+          </span>
+        </div>
+      </TransitionGroup>
     </div>
   </div>
 </template>
+
+<style scoped>
+.ds-event-row-enter-active {
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+.ds-event-row-leave-active {
+  transition: opacity 120ms ease-in;
+}
+.ds-event-row-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.ds-event-row-enter-to,
+.ds-event-row-leave-from {
+  opacity: 1;
+  transform: translateY(0);
+}
+.ds-event-row-leave-to {
+  opacity: 0;
+}
+</style>
