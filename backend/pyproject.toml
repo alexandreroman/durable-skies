@@ -2,7 +2,6 @@
 name = "durable-skies"
 version = "0.1.0"
 description = "Durable multi-agent drone delivery demo built with Google ADK and Temporal."
-readme = "../README.md"
 authors = [
     { name = "Alexandre Roman", email = "alexandre.roman@temporal.io" }
 ]

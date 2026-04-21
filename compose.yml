@@ -12,3 +12,46 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  worker:
+    build:
+      context: ./backend
+    image: durable-skies-backend
+    env_file:
+      - .env
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      temporal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    # Same build as worker. The shared `image:` tag lets Compose reuse the
+    # cached image layers instead of building twice.
+    build:
+      context: ./backend
+    image: durable-skies-backend
+    command: ["durable-skies-api"]
+    env_file:
+      - .env
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    depends_on:
+      temporal:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ./frontend
+    # Evaluated in the user's browser, so localhost points to the host.
+    environment:
+      NUXT_PUBLIC_API_BASE: "http://localhost:8000"
+    depends_on:
+      - api
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
