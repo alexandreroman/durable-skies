@@ -37,7 +37,7 @@ from ..world import DELIVERY_POINTS, DEPOTS, initial_drones
 
 MAX_EVENTS = 40
 _HISTORY_THRESHOLD = 2000
-_MIN_DISPATCH_BATTERY_PCT = 50.0
+_MIN_DISPATCH_BATTERY_PCT = 40.0
 
 
 @workflow.defn

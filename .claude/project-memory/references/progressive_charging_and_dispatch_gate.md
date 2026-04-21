@@ -1,10 +1,10 @@
 ---
-name: "Progressive battery charging in DroneWorkflow and 50% dispatch gate"
-description: "Battery carries across missions, charges progressively while idle via workflow.sleep; FleetWorkflow dispatch requires battery_pct > 50%"
+name: "Progressive battery charging in DroneWorkflow and 40% dispatch gate"
+description: "Battery carries across missions, charges progressively while idle via workflow.sleep; FleetWorkflow dispatch requires battery_pct > 40%"
 type: project
 ---
 
-# Progressive battery charging in DroneWorkflow and 50% dispatch gate
+# Progressive battery charging in DroneWorkflow and 40% dispatch gate
 
 Battery is no longer instant. Two coupled
 changes sit behind the "test battery charge /
@@ -87,10 +87,10 @@ a fully-charged idle drone would sit forever.
 The drone limps home on whatever battery it
 has and charges progressively at home.
 
-## 2. FleetWorkflow dispatch requires battery > 50%
+## 2. FleetWorkflow dispatch requires battery > 40%
 
 `workflows/fleet.py` defines
-`_MIN_DISPATCH_BATTERY_PCT = 50.0`. The filter
+`_MIN_DISPATCH_BATTERY_PCT = 40.0`. The filter
 is applied in three places and they must stay
 in sync:
 
@@ -105,12 +105,13 @@ in sync:
 
 **Why:** gives the dispatcher a meaningful
 constraint to reason about and lets a burst of
-orders demo backpressure — post-delivery a
-drone returns home with ~52% battery (6 nav
-steps × 2% × 4 legs = 48% drain), just above
-the threshold, so the second consecutive order
-for the same drone is blocked until it charges
-a few ticks.
+orders demo backpressure. Typical post-delivery
+return is ~64% (3 nav legs × 12% drain = 36%),
+so the drone stays eligible for one more
+dispatch and is blocked only when multiple
+consecutive deliveries push it below 40%. Drop
+the threshold further if the drain grows or
+raise it to force blocking after every mission.
 
 **How to apply:**
 
@@ -119,12 +120,13 @@ a few ticks.
   `state == IDLE and battery_pct > _MIN_DISPATCH_BATTERY_PCT`
   check.
 - If you tune the nav drain (`_BATTERY_PER_STEP`
-  × `_NAV_STEPS`), re-verify the ~52% return
-  figure — the demo's "one delivery, then
-  blocked" narrative depends on returning
-  close to the threshold.
+  × `_NAV_STEPS`), re-check how many deliveries
+  a drone survives before falling below the
+  threshold — the demo's backpressure narrative
+  depends on the relationship between drain and
+  threshold.
 - If you want to *force* the block for a demo,
-  signal `update_runtime {"battery_pct": 45}`
+  signal `update_runtime {"battery_pct": 35}`
   to any idle drone; the dispatcher will skip
   it until ~2s × N charging ticks bring it
-  above 50% (N = ceil((50 - battery) / 2)).
+  above 40% (N = ceil((40 - battery) / 2)).
