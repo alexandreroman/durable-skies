@@ -1,6 +1,6 @@
 ---
 name: "Progressive battery charging in DroneWorkflow and 40% dispatch gate"
-description: "Battery carries across missions, charges progressively while idle via workflow.sleep; FleetWorkflow dispatch requires battery_pct > 40%"
+description: "Battery carries across missions, charges progressively while idle via workflow.sleep; FleetWorkflow dispatch requires battery_pct > 40%; a drone below the threshold surfaces as CHARGING state"
 type: project
 ---
 
@@ -91,8 +91,8 @@ has and charges progressively at home.
 
 `workflows/fleet.py` defines
 `_MIN_DISPATCH_BATTERY_PCT = 40.0`. The filter
-is applied in three places and they must stay
-in sync:
+is applied in three places in fleet.py and
+they must stay in sync:
 
 1. The `idle_drones` list comprehension at the
    top of the run loop.
@@ -102,6 +102,24 @@ in sync:
    threshold — `update_drone` signals from
    charging ticks wake it).
 3. The `_pick_idle_drone` round-robin fallback.
+
+**The same 40% value is also duplicated in
+`workflows/drone_entity.py`** as
+`_MIN_DISPATCH_BATTERY_PCT` (with a comment
+pointing back to fleet.py) — the drone entity
+uses it to pick between `IDLE` and `CHARGING`
+for its at-home state (see §3 below). So the
+"stay in sync" invariant now covers 4 places:
+3 filters in fleet.py + 1 constant in
+drone_entity.py.
+
+The dispatcher filters keep the
+`battery_pct > 40` check even though a drone
+below the threshold now surfaces as `CHARGING`
+(and so is already excluded by the
+`state == IDLE` half). The numeric check is
+defence-in-depth against sync lag — do not
+simplify it out.
 
 **Why:** gives the dispatcher a meaningful
 constraint to reason about and lets a burst of
@@ -130,3 +148,59 @@ raise it to force blocking after every mission.
   to any idle drone; the dispatcher will skip
   it until ~2s × N charging ticks bring it
   above 40% (N = ceil((40 - battery) / 2)).
+
+## 3. At-home state splits IDLE / CHARGING
+
+`WorkflowState` (in `models.py`) has a dedicated
+`CHARGING` enum value alongside `IDLE`. Rule:
+
+- Drone with no mission, `battery_pct <= 40` →
+  `CHARGING` (not dispatchable yet).
+- Drone with no mission, `battery_pct > 40` →
+  `IDLE` (dispatchable; may still be climbing
+  towards 100%).
+
+The split is computed by
+`DroneWorkflow._idle_state()` and applied in
+**four** places — new at-home state assignments
+MUST go through the helper:
+
+1. Startup, right after `initial_battery_pct`
+   is assigned (before the first
+   `_sync_to_fleet`).
+2. Inside the charging loop, after each +2%
+   tick (the per-tick sync carries the
+   transition).
+3. Post-delivery cleanup — replaces the old
+   unconditional `self._state = WorkflowState.IDLE`.
+4. End of the `update_runtime` signal handler,
+   gated on the current state being one of
+   `{IDLE, CHARGING}` (never overwrite an
+   in-flight state).
+
+### Why the charging-tick sync is OK
+
+The push/pull split memory says "signals push
+only on state-enum transitions". The charging
+loop is a pre-existing exception: it runs
+`_sync_to_fleet` on every tick to carry the
+battery curve to the UI. Adding the
+`_idle_state()` recompute before each tick's
+sync only means that tick may also carry the
+IDLE↔CHARGING transition — no new sync paths
+were introduced.
+
+### Frontend mapping
+
+- `frontend/app/types/fleet.ts` — `WorkflowState`
+  union includes `"CHARGING"`.
+- `frontend/app/composables/fleetConstants.ts` —
+  `WORKFLOW_STATES.CHARGING` has amber styling
+  (distinct from `IDLE`'s muted grey and
+  `DISPATCHED`'s brighter amber).
+- `frontend/app/components/FleetMap.vue` —
+  `CHARGING` is treated like `IDLE`: excluded
+  from the legend, skipped in flight-plan
+  rendering, skipped in the drone click-hit
+  loop (a charging drone has no flight plan
+  and is parked at its home base).

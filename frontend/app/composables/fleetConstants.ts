@@ -2,6 +2,7 @@ import type { WorkflowState, WorkflowStateStyle } from "../types/fleet";
 
 export const WORKFLOW_STATES: Record<WorkflowState, WorkflowStateStyle> = {
   IDLE: { label: "Idle", color: "#5A5D82", bg: "#1A1A2E" },
+  CHARGING: { label: "Charging", color: "#D49C3D", bg: "#2A1F0D" },
   DISPATCHED: { label: "Dispatched", color: "#FFB547", bg: "#2A1F0D" },
   IN_FLIGHT: { label: "In flight", color: "#41D1FF", bg: "#0D2334" },
   DELIVERING: { label: "Delivering", color: "#00D4A0", bg: "#0D2A20" },

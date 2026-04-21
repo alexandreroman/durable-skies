@@ -1,5 +1,6 @@
 export type WorkflowState =
   | "IDLE"
+  | "CHARGING"
   | "DISPATCHED"
   | "IN_FLIGHT"
   | "DELIVERING"

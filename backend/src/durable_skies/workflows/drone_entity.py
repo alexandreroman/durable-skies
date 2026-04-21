@@ -30,6 +30,8 @@ from .delivery import DeliveryWorkflow
 _HISTORY_THRESHOLD = 2000
 _CHARGE_STEP_PCT = 2.0
 _CHARGE_STEP_DELAY_S = 2.0
+# Must match fleet._MIN_DISPATCH_BATTERY_PCT — see progressive_charging_and_dispatch_gate memory.
+_MIN_DISPATCH_BATTERY_PCT = 40.0
 
 
 def _build_flight_plan(order: Order, home_base_id: str) -> FlightPlan:
@@ -92,6 +94,7 @@ class DroneWorkflow:
         self._position = home_location.model_copy()
         self._fleet_workflow_id = fleet_workflow_id
         self._battery_pct = initial_battery_pct
+        self._state = self._idle_state()
 
         # Push an initial IDLE snapshot so the fleet knows we exist.
         await self._sync_to_fleet()
@@ -108,6 +111,7 @@ class DroneWorkflow:
                 if self._pending_order is not None or self._shutdown:
                     break
                 self._battery_pct = min(100.0, self._battery_pct + _CHARGE_STEP_PCT)
+                self._state = self._idle_state()
                 await self._sync_to_fleet()
 
             # Battery is full (or we bailed out); wait for the order/shutdown or a
@@ -155,7 +159,7 @@ class DroneWorkflow:
             self._current_order = None
             self._current_delivery_workflow_id = None
             self._flight_plan = None
-            self._state = WorkflowState.IDLE
+            self._state = self._idle_state()
             self._signals = []
             self._target_point_id = None
             if self._home_location is not None:
@@ -197,6 +201,8 @@ class DroneWorkflow:
             sig = update["add_signal"]
             if sig not in self._signals:
                 self._signals = [*self._signals, sig]
+        if self._state in (WorkflowState.IDLE, WorkflowState.CHARGING):
+            self._state = self._idle_state()
         # Only sync when the state enum moves — dispatcher idle-detection depends on it.
         if self._state != prev_state:
             await self._sync_to_fleet()
@@ -247,6 +253,9 @@ class DroneWorkflow:
     @workflow.query
     def get_drone_state(self) -> DroneRuntimeState:
         return self._snapshot()
+
+    def _idle_state(self) -> WorkflowState:
+        return WorkflowState.CHARGING if self._battery_pct <= _MIN_DISPATCH_BATTERY_PCT else WorkflowState.IDLE
 
     def _snapshot(self) -> DroneRuntimeState:
         assert self._drone_id is not None

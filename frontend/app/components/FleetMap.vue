@@ -92,7 +92,7 @@ watch(
   { deep: true, immediate: true },
 );
 
-const legendStates = Object.entries(WORKFLOW_STATES).filter(([k]) => k !== "IDLE") as Array<
+const legendStates = Object.entries(WORKFLOW_STATES).filter(([k]) => k !== "IDLE" && k !== "CHARGING") as Array<
   [string, (typeof WORKFLOW_STATES)[keyof typeof WORKFLOW_STATES]]
 >;
 
@@ -230,7 +230,7 @@ function draw(): void {
   }
 
   for (const drone of props.drones) {
-    if (drone.state === "IDLE" || drone.state === "COMPLETED") continue;
+    if (drone.state === "IDLE" || drone.state === "CHARGING" || drone.state === "COMPLETED") continue;
     const rendered = renderedPosition(drone.id, now);
     const pos = latLngToXY(rendered.lat, rendered.lon, W, H);
 
@@ -351,7 +351,7 @@ function handleClick(event: MouseEvent): void {
   const now = performance.now();
   let found: string | null = null;
   for (const drone of props.drones) {
-    if (drone.state === "IDLE" || drone.state === "COMPLETED") continue;
+    if (drone.state === "IDLE" || drone.state === "CHARGING" || drone.state === "COMPLETED") continue;
     const rendered = renderedPosition(drone.id, now);
     const { x, y } = latLngToXY(rendered.lat, rendered.lon, rect.width, rect.height);
     if (Math.hypot(x - mx, y - my) < 16) found = drone.id;

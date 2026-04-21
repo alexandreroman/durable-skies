@@ -30,6 +30,7 @@ class DeliveryPoint(BaseModel):
 
 class WorkflowState(StrEnum):
     IDLE = "IDLE"
+    CHARGING = "CHARGING"
     DISPATCHED = "DISPATCHED"
     IN_FLIGHT = "IN_FLIGHT"
     DELIVERING = "DELIVERING"
