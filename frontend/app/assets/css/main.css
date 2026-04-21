@@ -342,7 +342,6 @@ a.ds-order-chip:hover {
 /* --- Event log ----------------------------------------------------------- */
 
 .ds-event-log {
-  height: 220px;
   border-top: 1px solid var(--ds-border);
 }
 
