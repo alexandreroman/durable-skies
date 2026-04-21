@@ -1,6 +1,7 @@
-from .drone import DroneDeliveryWorkflow
+from .delivery import DeliveryWorkflow
+from .drone_entity import DroneWorkflow
 from .fleet import FleetWorkflow
 
-all_workflows = [DroneDeliveryWorkflow, FleetWorkflow]
+all_workflows = [DeliveryWorkflow, DroneWorkflow, FleetWorkflow]
 
-__all__ = ["DroneDeliveryWorkflow", "FleetWorkflow", "all_workflows"]
+__all__ = ["DeliveryWorkflow", "DroneWorkflow", "FleetWorkflow", "all_workflows"]

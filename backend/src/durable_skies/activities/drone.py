@@ -1,8 +1,9 @@
 """Drone control activities.
 
-Each activity simulates a physical action, streams updates back to the fleet
-workflow via signals, and is wired to the Temporal worker. The ADK agent
-(running inside the per-delivery workflow) invokes them through `activity_tool`.
+Each activity simulates a physical action, streams state updates back to the
+per-drone entity workflow (via `update_runtime`), and emits event-log entries
+on the singleton fleet workflow. The ADK pilot agent (running inside the
+per-delivery workflow) invokes these activities through `activity_tool`.
 """
 
 import asyncio
@@ -11,7 +12,8 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from ..models import Coordinate, FleetEventType, WorkflowState
-from .fleet_signal import append_event, update_drone
+from .drone_signal import advance_leg, update_drone
+from .fleet_signal import append_event
 from .world import resolve_location, resolve_name
 
 _NAV_STEPS = 24
@@ -25,20 +27,22 @@ def _lerp(a: float, b: float, t: float) -> float:
 
 
 @activity.defn
-async def takeoff_drone(drone_id: str, fleet_workflow_id: str) -> str:
+async def takeoff_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id: str) -> str:
     activity.logger.info("Drone %s taking off", drone_id)
     await append_event(fleet_workflow_id, f"🛫 {drone_id} takeoff", FleetEventType.INFO)
     await asyncio.sleep(1.5)
-    await update_drone(fleet_workflow_id, drone_id, state=WorkflowState.IN_FLIGHT)
+    await update_drone(drone_workflow_id, state=WorkflowState.IN_FLIGHT)
     await append_event(fleet_workflow_id, f"🚁 {drone_id} airborne", FleetEventType.INFO)
+    await advance_leg(drone_workflow_id)
     return f"Drone {drone_id} is airborne"
 
 
 @activity.defn
-async def land_drone(drone_id: str, fleet_workflow_id: str) -> str:
+async def land_drone(drone_id: str, drone_workflow_id: str, fleet_workflow_id: str) -> str:
     activity.logger.info("Drone %s landing", drone_id)
     await append_event(fleet_workflow_id, f"🛬 {drone_id} landing", FleetEventType.INFO)
     await asyncio.sleep(1.0)
+    await advance_leg(drone_workflow_id)
     return f"Drone {drone_id} has landed"
 
 
@@ -47,6 +51,7 @@ async def navigate_drone(
     drone_id: str,
     from_point_id: str,
     to_point_id: str,
+    drone_workflow_id: str,
     fleet_workflow_id: str,
     kind: str,
     battery_start_pct: float = 100.0,
@@ -76,8 +81,7 @@ async def navigate_drone(
         battery = max(0.0, battery - _BATTERY_PER_STEP)
 
         await update_drone(
-            fleet_workflow_id,
-            drone_id,
+            drone_workflow_id,
             state=in_flight_state,
             position=position,
             battery_pct=battery,
@@ -92,8 +96,7 @@ async def navigate_drone(
             and battery < _BATTERY_CRITICAL_PCT
         ):
             await update_drone(
-                fleet_workflow_id,
-                drone_id,
+                drone_workflow_id,
                 state=WorkflowState.INCIDENT,
                 add_signal="battery_critical",
             )
@@ -116,6 +119,7 @@ async def navigate_drone(
         f"📍 {drone_id} → {resolve_name(to_point_id)}",
         FleetEventType.INFO,
     )
+    await advance_leg(drone_workflow_id)
     return battery
 
 
@@ -124,6 +128,7 @@ async def pickup_package(
     drone_id: str,
     order_id: str,
     base_id: str,
+    drone_workflow_id: str,
     fleet_workflow_id: str,
 ) -> str:
     activity.logger.info("Drone %s picking up order %s at %s", drone_id, order_id, base_id)
@@ -133,7 +138,8 @@ async def pickup_package(
         FleetEventType.SIGNAL,
     )
     await asyncio.sleep(1.0)
-    await update_drone(fleet_workflow_id, drone_id, add_signal="dispatched")
+    await update_drone(drone_workflow_id, add_signal="dispatched")
+    await advance_leg(drone_workflow_id)
     return f"Order {order_id} picked up by {drone_id}"
 
 
@@ -142,17 +148,17 @@ async def dropoff_package(
     drone_id: str,
     order_id: str,
     dropoff_point_id: str,
+    drone_workflow_id: str,
     fleet_workflow_id: str,
 ) -> str:
     activity.logger.info("Drone %s delivering order %s at %s", drone_id, order_id, dropoff_point_id)
-    await update_drone(fleet_workflow_id, drone_id, state=WorkflowState.DELIVERING)
+    await update_drone(drone_workflow_id, state=WorkflowState.DELIVERING)
     await append_event(
         fleet_workflow_id,
         f"✅ {drone_id} delivered",
         FleetEventType.SUCCESS,
     )
     await asyncio.sleep(1.0)
-    await update_drone(fleet_workflow_id, drone_id, add_signal="delivered")
+    await update_drone(drone_workflow_id, add_signal="delivered")
+    await advance_leg(drone_workflow_id)
     return f"Order {order_id} delivered at {dropoff_point_id}"
-
-

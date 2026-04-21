@@ -10,6 +10,7 @@ On startup the API auto-starts the singleton `FleetWorkflow` (id
 
 import logging
 from contextlib import asynccontextmanager
+from typing import ClassVar
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -18,10 +19,11 @@ from temporalio.client import Client, WorkflowFailureError
 from temporalio.contrib.google_adk_agents import GoogleAdkPlugin
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from .. import TASK_QUEUE
+from .. import TASK_QUEUE, drone_workflow_id
 from ..config import get_settings
 from ..models import FleetState, Order
-from ..workflows import FleetWorkflow
+from ..workflows import DroneWorkflow, FleetWorkflow
+from ..world import initial_drone_startups
 
 FLEET_WORKFLOW_ID = "fleet-supervisor"
 
@@ -50,6 +52,28 @@ async def lifespan(app: FastAPI):
         log.info("Started FleetWorkflow %s", FLEET_WORKFLOW_ID)
     except WorkflowAlreadyStartedError:
         log.info("FleetWorkflow %s already running", FLEET_WORKFLOW_ID)
+
+    # Start one DroneWorkflow per drone. These are long-lived entity workflows
+    # that own per-drone runtime state and route orders to DeliveryWorkflow children.
+    for drone_id, name, home_base_id, home_location in initial_drone_startups():
+        wf_id = drone_workflow_id(drone_id)
+        try:
+            await client.start_workflow(
+                DroneWorkflow.run,
+                args=[
+                    drone_id,
+                    name,
+                    home_base_id,
+                    home_location,
+                    FLEET_WORKFLOW_ID,
+                    settings.anthropic_model,
+                ],
+                id=wf_id,
+                task_queue=TASK_QUEUE,
+            )
+            log.info("Started DroneWorkflow %s", wf_id)
+        except WorkflowAlreadyStartedError:
+            log.info("DroneWorkflow %s already running", wf_id)
 
     yield
 
@@ -86,11 +110,32 @@ async def submit_order(order: Order) -> dict[str, str]:
     return {"workflow_id": FLEET_WORKFLOW_ID, "order_id": order.id}
 
 
+class _QuietPollingAccessFilter(logging.Filter):
+    _QUIET: ClassVar[set[tuple[str, str]]] = {("GET", "/fleet"), ("GET", "/health")}
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if not isinstance(args, tuple) or len(args) < 5:
+            return True
+        _client, method, full_path, _http_version, status = args
+        if not isinstance(full_path, str):
+            return True
+        path = full_path.split("?", 1)[0]
+        if (method, path) not in self._QUIET:
+            return True
+        try:
+            code = int(status)
+        except (TypeError, ValueError):
+            return True
+        return not 200 <= code < 400
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
+    logging.getLogger("uvicorn.access").addFilter(_QuietPollingAccessFilter())
     settings = get_settings()
     uvicorn.run(
         "durable_skies.api.server:app",

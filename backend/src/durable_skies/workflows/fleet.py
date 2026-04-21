@@ -1,9 +1,10 @@
 """Fleet workflow: long-running supervisor for the drone fleet.
 
-Owns the canonical runtime state of the fleet (drones + event log), exposes it
-to the FastAPI layer through a query, and dispatches every incoming order to a
-`DroneDeliveryWorkflow` child. Children signal back with drone updates and
-event-log entries so the workflow stays the single source of truth for the UI.
+Owns the aggregated runtime snapshot (drones + event log), exposes it to the
+FastAPI layer through a query, and routes every incoming order to a per-drone
+entity workflow (`DroneWorkflow`). Entities signal back with drone updates;
+activities signal back with event-log entries. The fleet stays the single
+source of truth for the UI while remaining a thin aggregator.
 """
 
 from collections import deque
@@ -11,18 +12,18 @@ from typing import Any
 
 from temporalio import workflow
 
-from .. import TASK_QUEUE
+from .. import drone_workflow_id
 from ..models import (
     Coordinate,
     DroneRuntimeState,
     FleetEvent,
     FleetEventType,
     FleetState,
+    FlightPlan,
     Order,
     WorkflowState,
 )
 from ..world import DELIVERY_POINTS, DEPOTS, initial_drones
-from .drone import DroneDeliveryWorkflow
 
 MAX_EVENTS = 40
 
@@ -31,7 +32,7 @@ MAX_EVENTS = 40
 class FleetWorkflow:
     def __init__(self) -> None:
         self._drones: dict[str, DroneRuntimeState] = {d.id: d for d in initial_drones()}
-        self._drone_order: list[str] = list(self._drones.keys())
+        self._drone_order: list[str] = sorted(self._drones.keys())
         self._pending: deque[Order] = deque()
         self._events: deque[FleetEvent] = deque(maxlen=MAX_EVENTS)
         self._next_drone_idx = 0
@@ -56,27 +57,17 @@ class FleetWorkflow:
                 continue
 
             drone = self._drones[drone_id]
-            delivery_workflow_id = f"delivery-{order.id}"
+            # Optimistically mark the drone as dispatched so the next iteration
+            # of the loop doesn't pick it again before the entity has signaled
+            # its own state change back.
             drone.state = WorkflowState.DISPATCHED
             drone.current_order_id = order.id
-            drone.workflow_id = delivery_workflow_id
-            drone.target_point_id = order.pickup_base_id
-            drone.signals = ["dispatched"]
+            self._append_event(FleetEventType.SIGNAL, f"📦 {drone.name} dispatched")
 
-            self._append_event(
-                FleetEventType.SIGNAL,
-                f"📦 {drone.name} dispatched",
-            )
-
-            # Fire-and-forget: start the child and move on so the supervisor can
-            # accept more orders while deliveries run in parallel.
-            await workflow.start_child_workflow(
-                DroneDeliveryWorkflow.run,
-                args=[workflow.info().workflow_id, drone_id, drone.home_base_id, order, model_name],
-                id=delivery_workflow_id,
-                task_queue=TASK_QUEUE,
-                parent_close_policy=workflow.ParentClosePolicy.ABANDON,
-            )
+            # Hand the order off to the drone entity. The entity runs the
+            # DeliveryWorkflow as a child and signals back with state updates.
+            drone_handle = workflow.get_external_workflow_handle(drone_workflow_id(drone_id))
+            await drone_handle.signal("assign_order", order)
 
     @workflow.signal
     def submit_order(self, order: Order) -> None:
@@ -88,7 +79,7 @@ class FleetWorkflow:
 
     @workflow.signal
     def update_drone(self, update: dict[str, Any]) -> None:
-        """Merge a partial drone update coming from an activity."""
+        """Merge a partial drone update coming from a `DroneWorkflow`."""
         drone_id = update.get("drone_id")
         if not drone_id or drone_id not in self._drones:
             return
@@ -106,12 +97,17 @@ class FleetWorkflow:
             drone.current_order_id = update["current_order_id"]
         if "target_point_id" in update:
             drone.target_point_id = update["target_point_id"]
+        if "flight_plan" in update:
+            fp = update["flight_plan"]
+            drone.flight_plan = FlightPlan.model_validate(fp) if fp else None
         if update.get("clear_signals"):
             drone.signals = []
         if update.get("add_signal"):
             sig = update["add_signal"]
             if sig not in drone.signals:
                 drone.signals = [*drone.signals, sig]
+        if "signals" in update and update["signals"] is not None:
+            drone.signals = list(update["signals"])
 
     @workflow.signal
     def append_event(self, event: FleetEvent) -> None:

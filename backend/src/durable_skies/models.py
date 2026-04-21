@@ -38,6 +38,36 @@ class WorkflowState(StrEnum):
     COMPLETED = "COMPLETED"
 
 
+class FlightLegKind(StrEnum):
+    TAKEOFF = "takeoff"
+    TO_PICKUP = "to_pickup"
+    PICKUP = "pickup"
+    TO_DROPOFF = "to_dropoff"
+    DROPOFF = "dropoff"
+    RETURN = "return"
+    LAND = "land"
+    DIVERT_TO_BASE = "divert_to_base"
+
+
+class FlightLegStatus(StrEnum):
+    PENDING = "pending"
+    ACTIVE = "active"
+    DONE = "done"
+
+
+class FlightLeg(BaseModel):
+    kind: FlightLegKind
+    from_point_id: str | None = None  # None for instant steps with no movement
+    to_point_id: str  # for takeoff/land this is the pad (home or target base)
+    status: FlightLegStatus = FlightLegStatus.PENDING
+
+
+class FlightPlan(BaseModel):
+    order_id: str
+    legs: list[FlightLeg]
+    current_leg_index: int = 0
+
+
 class DroneRuntimeState(BaseModel):
     id: str
     name: str
@@ -49,6 +79,7 @@ class DroneRuntimeState(BaseModel):
     current_order_id: str | None = None
     signals: list[str] = Field(default_factory=list)
     target_point_id: str | None = None
+    flight_plan: FlightPlan | None = None
 
 
 class OrderStatus(StrEnum):

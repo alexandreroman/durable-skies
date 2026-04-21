@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { Base, DeliveryPoint, Drone } from "../types/fleet";
+import type { Base, DeliveryPoint, Drone, FlightLegKind, FlightLegStatus } from "../types/fleet";
 import { WORKFLOW_STATES, latLngToXY } from "../composables/fleetConstants";
 
 const props = defineProps<{
@@ -98,6 +98,42 @@ const STATE_STROKE: Record<string, string> = {
   INCIDENT: "#FF6B6B",
   DISPATCHED: "#FFB547",
 };
+
+const INCIDENT_STROKE = "#FF6B6B";
+
+interface RenderedLeg {
+  fromLat: number;
+  fromLon: number;
+  toLat: number;
+  toLon: number;
+  status: FlightLegStatus;
+  kind: FlightLegKind;
+}
+
+function legsToRender(
+  drone: Drone,
+  findCoord: (id: string | null) => { lat: number; lon: number } | null,
+): RenderedLeg[] {
+  const plan = drone.flight_plan;
+  if (!plan) return [];
+  const out: RenderedLeg[] = [];
+  for (const leg of plan.legs) {
+    // Skip non-movement legs: takeoff/pickup/dropoff/land share from==to or have no origin.
+    if (leg.from_point_id === null || leg.from_point_id === leg.to_point_id) continue;
+    const from = findCoord(leg.from_point_id);
+    const to = findCoord(leg.to_point_id);
+    if (!from || !to) continue;
+    out.push({
+      fromLat: from.lat,
+      fromLon: from.lon,
+      toLat: to.lat,
+      toLon: to.lon,
+      status: leg.status,
+      kind: leg.kind,
+    });
+  }
+  return out;
+}
 
 // Cached CSS-pixel size of the canvas and current device pixel ratio.
 // Updated by the ResizeObserver and the DPR matchMedia listener so the
@@ -205,26 +241,34 @@ function draw(): void {
     const rendered = renderedPosition(drone.id, now);
     const pos = latLngToXY(rendered.lat, rendered.lon, W, H);
 
-    const home = props.bases.find((b) => b.id === drone.home_base_id);
-    const target = findPointCoord(drone.target_point_id);
     const lineColor = STATE_STROKE[drone.state] ?? "#5A5D82";
 
-    if (home && target) {
-      const homePos = latLngToXY(home.location.lat, home.location.lon, W, H);
-      const targetPos = latLngToXY(target.lat, target.lon, W, H);
-      ctx.beginPath();
-      ctx.setLineDash([4, 4]);
-      ctx.strokeStyle = `${lineColor}44`;
-      ctx.lineWidth = 1;
-      if (drone.state === "RETURNING") {
-        ctx.moveTo(targetPos.x, targetPos.y);
-        ctx.lineTo(homePos.x, homePos.y);
-      } else {
-        ctx.moveTo(homePos.x, homePos.y);
-        ctx.lineTo(targetPos.x, targetPos.y);
+    if (props.selectedDrone === drone.id) {
+      for (const leg of legsToRender(drone, findPointCoord)) {
+        const a = latLngToXY(leg.fromLat, leg.fromLon, W, H);
+        const b = latLngToXY(leg.toLat, leg.toLon, W, H);
+        const isDivert = leg.kind === "divert_to_base";
+        const baseColor = isDivert ? INCIDENT_STROKE : lineColor;
+
+        ctx.beginPath();
+        if (leg.status === "done") {
+          ctx.setLineDash([]);
+          ctx.strokeStyle = `${baseColor}33`;
+          ctx.lineWidth = 1;
+        } else if (leg.status === "active") {
+          ctx.setLineDash([]);
+          ctx.strokeStyle = baseColor;
+          ctx.lineWidth = 2;
+        } else {
+          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = `${baseColor}44`;
+          ctx.lineWidth = 1;
+        }
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
-      ctx.stroke();
-      ctx.setLineDash([]);
     }
 
     if (props.selectedDrone === drone.id) {

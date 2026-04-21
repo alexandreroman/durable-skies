@@ -10,3 +10,4 @@
 
 - [Frontend is backend-driven via /fleet polling](references/frontend_is_backend_driven.md) — useFleet.ts polls GET /fleet every 500 ms; no client-side simulation
 - [Nuxt config process.env workaround](references/nuxt_config_process_workaround.md) — nuxt.config.ts inlines `declare const process` instead of depending on @types/node
+- [Per-drone entity workflow architecture](references/architecture_drone_entity.md) — FleetWorkflow aggregates, DroneWorkflow owns per-drone state + FlightPlan, DeliveryWorkflow is a child per order

@@ -26,6 +26,31 @@ export interface DeliveryPoint {
   location: Coordinate;
 }
 
+export type FlightLegKind =
+  | "takeoff"
+  | "to_pickup"
+  | "pickup"
+  | "to_dropoff"
+  | "dropoff"
+  | "return"
+  | "land"
+  | "divert_to_base";
+
+export type FlightLegStatus = "pending" | "active" | "done";
+
+export interface FlightLeg {
+  kind: FlightLegKind;
+  from_point_id: string | null;
+  to_point_id: string;
+  status: FlightLegStatus;
+}
+
+export interface FlightPlan {
+  order_id: string;
+  legs: FlightLeg[];
+  current_leg_index: number;
+}
+
 export interface Drone {
   id: string;
   name: string;
@@ -37,6 +62,7 @@ export interface Drone {
   current_order_id: string | null;
   signals: string[];
   target_point_id: string | null;
+  flight_plan: FlightPlan | null;
 }
 
 export interface FleetEvent {

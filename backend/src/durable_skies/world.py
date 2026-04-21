@@ -57,3 +57,12 @@ def initial_drones() -> list[DroneRuntimeState]:
             )
         )
     return drones
+
+
+def initial_drone_startups() -> list[tuple[str, str, str, Coordinate]]:
+    """Return (drone_id, name, home_base_id, home_location) tuples for startup."""
+    startups: list[tuple[str, str, str, Coordinate]] = []
+    for name, base_id in _DRONE_ASSIGNMENTS:
+        base = _base_by_id(base_id)
+        startups.append((name, name, base_id, base.location.model_copy()))
+    return startups

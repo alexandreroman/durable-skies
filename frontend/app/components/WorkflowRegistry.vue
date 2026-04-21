@@ -1,7 +1,20 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { Base, DeliveryPoint, Drone } from "../types/fleet";
+import type { Base, DeliveryPoint, Drone, FlightLegKind } from "../types/fleet";
 import { SIGNAL_COLORS, WORKFLOW_STATES } from "../composables/fleetConstants";
+
+const INCIDENT_COLOR = "#FF6B6B";
+
+const LEG_LABELS: Record<FlightLegKind, string> = {
+  takeoff: "Takeoff",
+  to_pickup: "→ Pickup",
+  pickup: "Pickup package",
+  to_dropoff: "→ Dropoff",
+  dropoff: "Deliver",
+  return: "Return",
+  land: "Land",
+  divert_to_base: "Divert to base",
+};
 
 const props = defineProps<{
   drones: Drone[];
@@ -10,7 +23,7 @@ const props = defineProps<{
   selectedDrone: string | null;
 }>();
 
-const emit = defineEmits<{ select: [id: string] }>();
+const emit = defineEmits<{ select: [id: string | null] }>();
 
 const baseById = computed(() => new Map(props.bases.map((b) => [b.id, b])));
 const deliveryPointById = computed(() => new Map(props.deliveryPoints.map((p) => [p.id, p])));
@@ -43,19 +56,20 @@ function orderLabel(orderId: string): string {
 </script>
 
 <template>
-  <div class="flex flex-col">
+  <div class="flex flex-col" @click.self="emit('select', null)">
     <div
       class="flex items-center justify-between px-3 py-2"
       style="border-bottom: 1px solid var(--ds-divider)"
+      @click.self="emit('select', null)"
     >
-      <span class="ds-section-label">Workflow Registry</span>
+      <span class="ds-section-label">Drones</span>
       <span class="ds-count-pill">
         <span class="ds-count-num">{{ drones.length }}</span>
         <span>active</span>
       </span>
     </div>
 
-    <div class="flex-1 min-h-0 overflow-y-auto">
+    <div class="flex-1 min-h-0 overflow-y-auto" @click.self="emit('select', null)">
       <div
         v-for="drone in drones"
         :key="drone.id"
@@ -175,6 +189,40 @@ function orderLabel(orderId: string): string {
             ⚡ {{ signal }}
           </span>
         </div>
+
+        <div v-if="drone.flight_plan" class="ds-plan-track mt-1.5">
+          <template v-for="(leg, i) in drone.flight_plan.legs" :key="i">
+            <span
+              class="ds-plan-step"
+              :class="[
+                `is-${leg.status}`,
+                { 'is-divert': leg.kind === 'divert_to_base' },
+              ]"
+              :style="
+                leg.status === 'active'
+                  ? {
+                      background:
+                        leg.kind === 'divert_to_base'
+                          ? INCIDENT_COLOR
+                          : WORKFLOW_STATES[drone.state].color,
+                      borderColor:
+                        leg.kind === 'divert_to_base'
+                          ? INCIDENT_COLOR
+                          : WORKFLOW_STATES[drone.state].color,
+                    }
+                  : leg.kind === 'divert_to_base'
+                    ? { borderColor: INCIDENT_COLOR, color: INCIDENT_COLOR }
+                    : {}
+              "
+              :title="LEG_LABELS[leg.kind]"
+            />
+            <span
+              v-if="i < drone.flight_plan.legs.length - 1"
+              class="ds-plan-link"
+              :class="{ 'is-done': leg.status === 'done' }"
+            />
+          </template>
+        </div>
       </div>
     </div>
   </div>
@@ -185,5 +233,68 @@ function orderLabel(orderId: string): string {
   flex-shrink: 0;
   display: inline-block;
   vertical-align: middle;
+}
+
+.ds-plan-track {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.ds-plan-step {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: transparent;
+  flex-shrink: 0;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+.ds-plan-step.is-done {
+  background: rgba(255, 255, 255, 0.35);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.ds-plan-step.is-active {
+  width: 8px;
+  height: 8px;
+  animation: ds-plan-pulse 1.4s ease-in-out infinite;
+}
+
+.ds-plan-step.is-pending {
+  background: transparent;
+}
+
+.ds-plan-step.is-divert.is-done {
+  background: #ff6b6b;
+  border-color: #ff6b6b;
+}
+
+.ds-plan-link {
+  width: 6px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.18);
+  flex-shrink: 0;
+}
+
+.ds-plan-link.is-done {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+@keyframes ds-plan-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 4px 1px currentColor;
+    opacity: 0.7;
+  }
 }
 </style>
