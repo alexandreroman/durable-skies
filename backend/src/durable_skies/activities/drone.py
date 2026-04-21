@@ -1,9 +1,16 @@
 """Drone control activities.
 
-Each activity simulates a physical action, streams state updates back to the
-per-drone entity workflow (via `update_runtime`), and emits event-log entries
-on the singleton fleet workflow. The ADK pilot agent (running inside the
-per-delivery workflow) invokes these activities through `activity_tool`.
+Each activity simulates a physical action. State flows split by durability
+needs:
+
+- Business state (state-enum transitions, advance_leg, signals): pushed back
+  to the per-drone entity workflow via `update_runtime` / `advance_leg`.
+- Live telemetry (position, battery, target_point_id): written to Redis per
+  nav step. The FastAPI gateway merges it into `/fleet`. Redis is best-effort —
+  a failed write never breaks a mission.
+
+The ADK pilot agent (running inside the per-delivery workflow) invokes these
+activities through `activity_tool`.
 """
 
 import asyncio
@@ -12,6 +19,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from ..models import Coordinate, FleetEventType, WorkflowState
+from ..telemetry import write_drone_telemetry
 from .drone_signal import advance_leg, update_drone
 from .fleet_signal import append_event
 from .world import resolve_location, resolve_name
@@ -60,10 +68,11 @@ async def navigate_drone(
     `kind` is "to_target" or "returning" and maps to the workflow state reported
     during the flight. Returns the final battery percentage.
 
-    If the battery dips below the critical threshold during the first half of
-    a "to_target" trip, the activity injects an incident and raises a
-    non-retryable `ApplicationError` so the calling workflow can run its
-    compensation saga.
+    Position/battery are streamed to Redis (telemetry); only the battery-critical
+    incident is signaled back to the drone workflow. If the battery dips below
+    the critical threshold during the first half of a "to_target" trip, the
+    activity injects an incident and raises a non-retryable `ApplicationError`
+    so the calling workflow can run its compensation saga.
     """
     start = resolve_location(from_point_id)
     end = resolve_location(to_point_id)
@@ -79,21 +88,24 @@ async def navigate_drone(
         )
         battery = max(0.0, battery - _BATTERY_PER_STEP)
 
-        await update_drone(
-            drone_workflow_id,
-            state=in_flight_state,
+        await write_drone_telemetry(
+            drone_id,
             position=position,
             battery_pct=battery,
             target_point_id=to_point_id,
+            state=in_flight_state,
         )
         activity.heartbeat(progress)
 
         # Inject a one-shot battery incident during the outbound half of a delivery.
-        if (
-            kind == "to_target"
-            and progress < 0.5
-            and battery < _BATTERY_CRITICAL_PCT
-        ):
+        if kind == "to_target" and progress < 0.5 and battery < _BATTERY_CRITICAL_PCT:
+            await write_drone_telemetry(
+                drone_id,
+                position=position,
+                battery_pct=battery,
+                target_point_id=to_point_id,
+                state=WorkflowState.INCIDENT,
+            )
             await update_drone(
                 drone_workflow_id,
                 state=WorkflowState.INCIDENT,

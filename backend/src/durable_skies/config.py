@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000)
 
+    redis_url: str = Field(default="redis://localhost:6379/0")
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -109,6 +109,10 @@ class DeliveryWorkflow:
                 start_to_close_timeout=short,
                 retry_policy=fast_retry,
             )
+            # navigate_drone no longer pushes state per step (it only streams
+            # position/battery to Redis), so we mark the RETURNING transition
+            # explicitly here.
+            await drone_handle.signal("update_runtime", {"state": WorkflowState.RETURNING.value})
             battery = await workflow.execute_activity(
                 navigate_drone,
                 args=[

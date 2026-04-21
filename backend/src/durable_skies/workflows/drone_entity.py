@@ -176,9 +176,10 @@ class DroneWorkflow:
             sig = update["add_signal"]
             if sig not in self._signals:
                 self._signals = [*self._signals, sig]
-        # Fleet only needs to know about state transitions (for dispatcher idle
-        # detection). Nav-step position/battery updates are pulled on demand by
-        # the API via DroneWorkflow.get_drone_state.
+        # Position/battery now flow via Redis telemetry; this signal only
+        # carries checkpoint resets (mission end, recharge) and state
+        # transitions driven by DeliveryWorkflow. Sync to fleet only when the
+        # state enum moves so the dispatcher's idle detection stays correct.
         if self._state != prev_state:
             await self._sync_to_fleet()
 

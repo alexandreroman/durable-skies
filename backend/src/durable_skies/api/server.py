@@ -9,6 +9,7 @@ On startup the API auto-starts the singleton `FleetWorkflow` (id
 """
 
 import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
 from typing import ClassVar
@@ -23,7 +24,8 @@ from temporalio.service import RPCError
 
 from .. import TASK_QUEUE, drone_workflow_id, order_workflow_id
 from ..config import get_settings
-from ..models import DroneRuntimeState, FleetState, Order
+from ..models import Coordinate, DroneRuntimeState, FleetState, Order
+from ..telemetry import close_telemetry_client, read_drone_telemetries
 from ..workflows import DroneWorkflow, FleetWorkflow, OrderWorkflow
 from ..world import initial_drone_startups
 
@@ -76,7 +78,10 @@ async def lifespan(app: FastAPI):
         except WorkflowAlreadyStartedError:
             log.info("DroneWorkflow %s already running", wf_id)
 
-    yield
+    try:
+        yield
+    finally:
+        await close_telemetry_client()
 
 
 app = FastAPI(title="durable-skies", lifespan=lifespan)
@@ -109,37 +114,61 @@ async def _query_drone(client: Client, drone_id: str) -> DroneRuntimeState | Non
         return None
 
 
+def _overlay_telemetry(drone: DroneRuntimeState, telemetry: dict | None) -> DroneRuntimeState:
+    """Merge Redis telemetry on top of a workflow-backed drone snapshot.
+
+    Position, battery, and target_point_id come from Redis (fresh, per-step);
+    state, signals, flight_plan, and current_order_id stay from the workflow
+    query (authoritative for business state).
+    """
+    if telemetry is None:
+        return drone
+    update: dict[str, object] = {}
+    if (pos := telemetry.get("position")) is not None:
+        update["position"] = Coordinate.model_validate(pos)
+    if (battery := telemetry.get("battery_pct")) is not None:
+        update["battery_pct"] = float(battery)
+    if "target_point_id" in telemetry:
+        update["target_point_id"] = telemetry["target_point_id"]
+    return drone.model_copy(update=update) if update else drone
+
+
 @app.get("/fleet", response_model=FleetState)
 async def get_fleet() -> FleetState:
     client: Client = app.state.client
     fleet_handle = client.get_workflow_handle(FLEET_WORKFLOW_ID)
 
     # Queries need a live worker; cap the wait so a worker restart doesn't freeze the UI poll loop.
-    # The fleet query is authoritative for events/bases/pending_orders_count; per-drone queries
-    # provide fresh position/battery/flight_plan since drones no longer push nav-step updates.
-    # Fire all queries up front so a slow fleet query doesn't serialize the drone fan-out.
-    fleet_task = asyncio.create_task(
-        asyncio.wait_for(fleet_handle.query(FleetWorkflow.get_fleet_state), timeout=2.0)
-    )
+    # The fleet query is authoritative for events/bases/pending_orders_count and business-state
+    # fields (state enum, signals, flight_plan). Per-drone queries pull flight_plan + business
+    # state; Redis telemetry provides live position/battery on top. Fire everything in parallel.
+    drone_ids = [drone_id for drone_id, _name, _base_id, _loc in initial_drone_startups()]
+    fleet_task = asyncio.create_task(asyncio.wait_for(fleet_handle.query(FleetWorkflow.get_fleet_state), timeout=2.0))
     drone_tasks: dict[str, asyncio.Task[DroneRuntimeState | None]] = {
-        drone_id: asyncio.create_task(_query_drone(client, drone_id))
-        for drone_id, _name, _base_id, _loc in initial_drone_startups()
+        drone_id: asyncio.create_task(_query_drone(client, drone_id)) for drone_id in drone_ids
     }
+    telemetry_task = asyncio.create_task(read_drone_telemetries(drone_ids))
 
     try:
         fleet_state = await fleet_task
     except TimeoutError as err:
         for task in drone_tasks.values():
             task.cancel()
+        telemetry_task.cancel()
         log.warning("Fleet query timed out; worker may be unavailable")
         raise HTTPException(status_code=503, detail="fleet query timed out — worker may be unavailable") from err
     except WorkflowFailureError as err:  # workflow failed: surface as 503
         for task in drone_tasks.values():
             task.cancel()
+        telemetry_task.cancel()
         raise HTTPException(status_code=503, detail=str(err)) from err
 
-    await asyncio.gather(*drone_tasks.values())
-    merged = [(drone_tasks[d.id].result() if d.id in drone_tasks else None) or d for d in fleet_state.drones]
+    await asyncio.gather(*drone_tasks.values(), telemetry_task)
+    telemetries = telemetry_task.result()
+    merged = [
+        _overlay_telemetry(drone_tasks[d.id].result() or d, telemetries.get(d.id)) if d.id in drone_tasks else d
+        for d in fleet_state.drones
+    ]
     return fleet_state.model_copy(update={"drones": merged})
 
 
@@ -147,16 +176,14 @@ async def get_fleet() -> FleetState:
 async def submit_order(order: Order) -> dict[str, str]:
     client: Client = app.state.client
     wf_id = order_workflow_id(order.id)
-    try:
+    # Re-POSTing the same order id is a no-op.
+    with contextlib.suppress(WorkflowAlreadyStartedError):
         await client.start_workflow(
             OrderWorkflow.run,
             args=[order, FLEET_WORKFLOW_ID],
             id=wf_id,
             task_queue=TASK_QUEUE,
         )
-    except WorkflowAlreadyStartedError:
-        # Re-POSTing the same order id is a no-op.
-        pass
     return {"workflow_id": wf_id, "order_id": order.id}
 
 

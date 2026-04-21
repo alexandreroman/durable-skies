@@ -28,10 +28,11 @@ state mid-mission.
   showing the fleet map and a per-drone status
   panel.
 - **One-command local stack** — a Docker Compose
-  file brings up a single Temporal dev-server
-  container that serves both the gRPC frontend and
-  the built-in Web UI; `make` targets start the
-  worker, the API, and the frontend.
+  file brings up a Temporal dev-server container
+  (serving both the gRPC frontend and the built-in
+  Web UI) alongside a Redis container for live
+  drone telemetry; `make` targets start the worker,
+  the API, and the frontend.
 
 ## Prerequisites
 
@@ -98,6 +99,7 @@ required.
 | `ANTHROPIC_API_KEY`  | Anthropic API key (required)            | —                             |
 | `TEMPORAL_ADDRESS`   | Temporal frontend host:port             | `localhost:7233`              |
 | `TEMPORAL_NAMESPACE` | Temporal namespace                      | `default`                     |
+| `REDIS_URL`          | Redis URL for live drone telemetry      | `redis://localhost:6379/0`    |
 | `ANTHROPIC_MODEL`    | Claude model (LiteLLM-style identifier) | `anthropic/claude-sonnet-4-6` |
 | `API_HOST`           | FastAPI bind address                    | `0.0.0.0`                     |
 | `API_PORT`           | FastAPI listen port                     | `8000`                        |

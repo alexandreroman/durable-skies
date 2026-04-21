@@ -18,27 +18,35 @@ kind of data:
   when it fires). Required so FleetWorkflow's
   dispatcher sees idle candidates without
   polling.
-- **Pulled** by the API at `GET /fleet` time:
-  position, battery, flight_plan. The API fires
-  the fleet query and all 6 per-drone queries
-  in parallel (`asyncio.gather`, 2 s
-  `asyncio.wait_for` each) and merges. Fresh
-  DroneWorkflow snapshots override fleet's
-  cached per-drone entries when the drone
-  query succeeds; otherwise the cached entry
-  is used.
+- **Pulled via Temporal query** by the API at
+  `GET /fleet` time: `flight_plan`, `state`,
+  `signals`, `current_order_id`,
+  `target_point_id`. The API fires the fleet
+  query and all per-drone queries in parallel
+  (`asyncio.gather`, 2 s `asyncio.wait_for`
+  each) and merges.
+- **Pulled via Redis** at the same moment:
+  `position` and `battery_pct` — see
+  `redis_telemetry_split.md`. These fields used
+  to be pulled via the DroneWorkflow query too,
+  but were moved out of Temporal entirely
+  because they refresh every ~2 s and dominated
+  event growth.
 
 **Why:** position/battery update every nav step
 (~18 times per delivery per drone). Pushing
 each via signal created the dominant event
 volume on FleetWorkflow. Queries don't emit
 history events, so pulling eliminates that cost
-at the expense of a 6-fanout read at every
+at the expense of a fanout read at every
 500 ms poll — the queries are cheap, the
 fanout is bounded, and the UI's existing poll
-cadence absorbs it. Measured: FleetWorkflow
-dropped from ~197 to ~90 events/delivery,
-DroneWorkflow from ~302 to ~169.
+cadence absorbs it. Measured after the query
+migration: FleetWorkflow dropped from ~197 to
+~90 events/delivery, DroneWorkflow from ~302 to
+~169. The subsequent Redis split cut per-step
+signals to DroneWorkflow as well — see
+`redis_telemetry_split.md`.
 
 ## Invariants to preserve
 

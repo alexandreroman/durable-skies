@@ -34,8 +34,8 @@ ui: ## Run the Nuxt dev server
 ##@ Infrastructure
 
 .PHONY: infra-up
-infra-up: ## Start Temporal dev server (gRPC :7233, UI http://localhost:8233)
-	docker-compose up -d temporal
+infra-up: ## Start Temporal dev server + Redis (Temporal gRPC :7233, UI :8233, Redis :6379)
+	docker-compose up -d temporal redis
 
 .PHONY: infra-down
 infra-down: ## Stop local Temporal
