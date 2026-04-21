@@ -41,21 +41,26 @@ export function useFleet() {
 
   async function submitOrder(): Promise<void> {
     const pickupBase = bases.value[0];
-    const dropoff =
-      deliveryPoints.value.length > 0
-        ? deliveryPoints.value[Math.floor(Math.random() * deliveryPoints.value.length)]
-        : undefined;
 
-    const order = {
-      id: crypto.randomUUID(),
-      pickup_base_id: pickupBase?.id ?? "base-north",
-      dropoff_point_id: dropoff?.id ?? "dp-1",
-      payload_kg: 1.2,
-      created_at: new Date().toISOString(),
-    };
+    const requests = Array.from({ length: 10 }, () => {
+      const dropoff =
+        deliveryPoints.value.length > 0
+          ? deliveryPoints.value[Math.floor(Math.random() * deliveryPoints.value.length)]
+          : undefined;
+
+      const order = {
+        id: crypto.randomUUID(),
+        pickup_base_id: pickupBase?.id ?? "base-north",
+        dropoff_point_id: dropoff?.id ?? "dp-1",
+        payload_kg: 1.2,
+        created_at: new Date().toISOString(),
+      };
+
+      return $fetch(`${config.public.apiBase}/orders`, { method: "POST", body: order });
+    });
 
     try {
-      await $fetch(`${config.public.apiBase}/orders`, { method: "POST", body: order });
+      await Promise.all(requests);
     } catch {
       // swallow: next poll will retry
     }

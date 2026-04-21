@@ -62,7 +62,7 @@ const {
         </span>
         <button class="ds-submit-button" @click="submitOrder()">
           <span class="ds-submit-plus">+</span>
-          <span>Submit order</span>
+          <span>Submit Orders</span>
         </button>
       </div>
     </header>
