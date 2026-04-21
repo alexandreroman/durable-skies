@@ -3,9 +3,13 @@
 ##@ Run
 
 .PHONY: dev
-dev: infra-up ## Run the full stack (Temporal + worker + API + UI)
+dev: ## Run the frontend and backend in dev mode with hot-reload
 	@cd frontend && pnpm install --prefer-offline --silent
 	$(MAKE) -j3 worker-dev api-dev ui
+
+.PHONY: app
+app: ## Run the full stack in containers
+	docker-compose up
 
 .PHONY: worker
 worker: ## Run the Temporal worker
