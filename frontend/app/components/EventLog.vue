@@ -29,7 +29,6 @@ function messageColor(type: FleetEvent["type"]): string {
   <div class="ds-event-log flex flex-col">
     <div class="ds-event-header">
       <span class="ds-section-label">Event Log</span>
-      <span class="ds-section-caption">{{ events.length }}</span>
     </div>
     <div class="flex-1 overflow-y-auto">
       <div v-for="event in events" :key="event.id" class="ds-event-row">
