@@ -89,7 +89,7 @@ class FleetWorkflow:
                 # order stays on the pending queue the whole time.
                 if not self._waiting_for_drone:
                     await self._log_event(
-                        "⌛ Dispatcher waiting: no available drone",
+                        "⌛ Waiting for drone",
                         FleetEventType.INFO,
                     )
                     self._waiting_for_drone = True
