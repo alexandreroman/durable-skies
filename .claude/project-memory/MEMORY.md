@@ -16,3 +16,4 @@
 - [Battery threaded for anomaly triggering](references/battery_threading_for_anomaly.md) — DroneWorkflow passes self._battery_pct into DeliveryWorkflow so battery_critical can actually fire
 - [Long-lived workflow signature migration](references/workflow_signature_migration.md) — adding required args to FleetWorkflow/DroneWorkflow.run needs optional defaults or terminate+restart
 - [Temporal history volume invariants](references/temporal_history_volume.md) — nav cadence triplet must move together; new FleetWorkflow state must be threaded through the CAN payload
+- [Fleet push/pull split](references/fleet_push_pull_split.md) — drones push state-enum transitions only; API pulls position/battery/flight_plan from each DroneWorkflow at /fleet time

@@ -16,13 +16,14 @@ from typing import ClassVar
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from temporalio.client import Client, WorkflowFailureError
+from temporalio.client import Client, WorkflowFailureError, WorkflowQueryFailedError
 from temporalio.contrib.google_adk_agents import GoogleAdkPlugin
 from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.service import RPCError
 
 from .. import TASK_QUEUE, drone_workflow_id, order_workflow_id
 from ..config import get_settings
-from ..models import FleetState, Order
+from ..models import DroneRuntimeState, FleetState, Order
 from ..workflows import DroneWorkflow, FleetWorkflow, OrderWorkflow
 from ..world import initial_drone_startups
 
@@ -92,18 +93,54 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+async def _query_drone(client: Client, drone_id: str) -> DroneRuntimeState | None:
+    """Query a single DroneWorkflow for its live runtime state.
+
+    Silently downgrades any per-drone query failure — timeout, RPC failure
+    (worker unreachable, task in failed state), or query-handler exception
+    (e.g. replay non-determinism) — to None so one unresponsive drone doesn't
+    take down the whole /fleet response. The caller falls back to fleet's
+    cached snapshot for that drone.
+    """
+    handle = client.get_workflow_handle(drone_workflow_id(drone_id))
+    try:
+        return await asyncio.wait_for(handle.query(DroneWorkflow.get_drone_state), timeout=2.0)
+    except (TimeoutError, WorkflowFailureError, WorkflowQueryFailedError, RPCError):
+        return None
+
+
 @app.get("/fleet", response_model=FleetState)
 async def get_fleet() -> FleetState:
     client: Client = app.state.client
-    handle = client.get_workflow_handle(FLEET_WORKFLOW_ID)
+    fleet_handle = client.get_workflow_handle(FLEET_WORKFLOW_ID)
+
+    # Queries need a live worker; cap the wait so a worker restart doesn't freeze the UI poll loop.
+    # The fleet query is authoritative for events/bases/pending_orders_count; per-drone queries
+    # provide fresh position/battery/flight_plan since drones no longer push nav-step updates.
+    # Fire all queries up front so a slow fleet query doesn't serialize the drone fan-out.
+    fleet_task = asyncio.create_task(
+        asyncio.wait_for(fleet_handle.query(FleetWorkflow.get_fleet_state), timeout=2.0)
+    )
+    drone_tasks: dict[str, asyncio.Task[DroneRuntimeState | None]] = {
+        drone_id: asyncio.create_task(_query_drone(client, drone_id))
+        for drone_id, _name, _base_id, _loc in initial_drone_startups()
+    }
+
     try:
-        # Queries need a live worker; cap the wait so a worker restart doesn't freeze the UI poll loop.
-        return await asyncio.wait_for(handle.query(FleetWorkflow.get_fleet_state), timeout=2.0)
+        fleet_state = await fleet_task
     except TimeoutError as err:
+        for task in drone_tasks.values():
+            task.cancel()
         log.warning("Fleet query timed out; worker may be unavailable")
         raise HTTPException(status_code=503, detail="fleet query timed out — worker may be unavailable") from err
     except WorkflowFailureError as err:  # workflow failed: surface as 503
+        for task in drone_tasks.values():
+            task.cancel()
         raise HTTPException(status_code=503, detail=str(err)) from err
+
+    await asyncio.gather(*drone_tasks.values())
+    merged = [(drone_tasks[d.id].result() if d.id in drone_tasks else None) or d for d in fleet_state.drones]
+    return fleet_state.model_copy(update={"drones": merged})
 
 
 @app.post("/orders")

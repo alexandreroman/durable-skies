@@ -161,6 +161,7 @@ class DroneWorkflow:
     @workflow.signal
     async def update_runtime(self, update: dict[str, Any]) -> None:
         """Merge a partial runtime update coming from an activity."""
+        prev_state = self._state
         if "state" in update:
             self._state = WorkflowState(update["state"])
         if "position" in update and update["position"] is not None:
@@ -175,7 +176,11 @@ class DroneWorkflow:
             sig = update["add_signal"]
             if sig not in self._signals:
                 self._signals = [*self._signals, sig]
-        await self._sync_to_fleet()
+        # Fleet only needs to know about state transitions (for dispatcher idle
+        # detection). Nav-step position/battery updates are pulled on demand by
+        # the API via DroneWorkflow.get_drone_state.
+        if self._state != prev_state:
+            await self._sync_to_fleet()
 
     @workflow.signal
     async def advance_leg(self) -> None:
@@ -189,7 +194,7 @@ class DroneWorkflow:
         if plan.current_leg_index < len(plan.legs):
             plan.legs[plan.current_leg_index].status = FlightLegStatus.ACTIVE
             self._target_point_id = plan.legs[plan.current_leg_index].to_point_id
-        await self._sync_to_fleet()
+        # No fleet sync: the API pulls fresh flight_plan from the drone query.
 
     @workflow.signal
     async def low_battery(self) -> None:
@@ -214,7 +219,7 @@ class DroneWorkflow:
             status=FlightLegStatus.PENDING,
         )
         plan.legs.insert(plan.current_leg_index + 1, divert)
-        await self._sync_to_fleet()
+        # No fleet sync: the API pulls fresh flight_plan from the drone query.
 
     @workflow.signal
     def shutdown(self) -> None:
