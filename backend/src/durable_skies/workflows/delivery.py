@@ -36,9 +36,10 @@ from ..activities import (
     log_fleet_event,
     navigate_drone,
     pickup_package,
+    read_drone_position,
     takeoff_drone,
 )
-from ..models import FleetEvent, FleetEventType, Order, WorkflowState
+from ..models import Coordinate, FleetEvent, FleetEventType, Order, WorkflowState
 from ..world import DELIVERY_POINTS, DEPOTS
 
 _LOG_EVENT_TIMEOUT = timedelta(seconds=5)
@@ -136,8 +137,12 @@ class DeliveryWorkflow:
                 retry_policy=fast_retry,
             )
         except (ActivityError, ApplicationError) as err:
-            action = await self._run_anomaly_handler(drone_id, order.id, model_name)
-            await self._execute_recovery(action, drone_handle, drone_id, home_base_id, order)
+            action, drone_position = await self._run_anomaly_handler(
+                drone_id, order, home_base_id, model_name
+            )
+            await self._execute_recovery(
+                action, drone_handle, drone_id, home_base_id, order, drone_position
+            )
             await self._finalize(drone_handle, drone_id, home_base_id, order.id, incident=True)
             return f"Order {order.id} aborted ({action}): {err}"
 
@@ -161,14 +166,26 @@ class DeliveryWorkflow:
     async def _run_anomaly_handler(
         self,
         drone_id: str,
-        order_id: str,
+        order: Order,
+        home_base_id: str,
         model_name: str,
-    ) -> str:
-        """Invoke the anomaly agent; return a validated recovery action string.
+    ) -> tuple[str, Coordinate | None]:
+        """Invoke the anomaly agent; return a validated recovery action and the drone's live position.
 
         Any failure inside the agent run falls back to ACTION_ABORT so the
         workflow always has a safe recovery path.
         """
+        try:
+            drone_position = await workflow.execute_activity(
+                read_drone_position,
+                drone_id,
+                start_to_close_timeout=timedelta(seconds=5),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+        except (ActivityError, ApplicationError) as err:
+            workflow.logger.warning("Failed to read live position for %s: %s", drone_id, err)
+            drone_position = None
+
         try:
             agent = build_anomaly_agent(model_name)
             runner = InMemoryRunner(agent=agent, app_name="durable-skies")
@@ -177,11 +194,7 @@ class DeliveryWorkflow:
                 user_id=drone_id,
             )
 
-            prompt = (
-                f"Drone {drone_id} is executing order {order_id} and has raised an in-flight "
-                "incident (type: battery_critical). Pick the recovery action that best balances "
-                "safety and mission continuity."
-            )
+            prompt = self._build_anomaly_prompt(drone_id, order, home_base_id, drone_position)
             async for _ in runner.run_async(
                 user_id=drone_id,
                 session_id=session.id,
@@ -205,7 +218,32 @@ class DeliveryWorkflow:
             action = ACTION_ABORT
 
         await self._log_event(f"🤖 Recovery agent → {action}", FleetEventType.INFO)
-        return action
+        return action, drone_position
+
+    def _build_anomaly_prompt(
+        self,
+        drone_id: str,
+        order: Order,
+        home_base_id: str,
+        drone_position: Coordinate | None,
+    ) -> str:
+        base = (
+            f"Drone {drone_id} is executing order {order.id} and has raised an in-flight "
+            "incident (type: battery_critical). Pick the recovery action that best balances "
+            "safety and mission continuity."
+        )
+        if drone_position is None:
+            return base
+        home = next(b.location for b in DEPOTS if b.id == home_base_id)
+        nearest_id, _ = self._nearest_base(order, drone_position)
+        nearest = next(b.location for b in DEPOTS if b.id == nearest_id)
+        d_home = math.hypot(drone_position.lat - home.lat, drone_position.lon - home.lon)
+        d_nearest = math.hypot(drone_position.lat - nearest.lat, drone_position.lon - nearest.lon)
+        return (
+            f"{base}\n"
+            f"Live position: lat={drone_position.lat:.4f}, lon={drone_position.lon:.4f}.\n"
+            f"Distance to home base: {d_home:.4f}; distance to nearest base: {d_nearest:.4f}."
+        )
 
     async def _execute_recovery(
         self,
@@ -214,11 +252,12 @@ class DeliveryWorkflow:
         drone_id: str,
         home_base_id: str,
         order: Order,
+        drone_position: Coordinate | None,
     ) -> None:
         if action == ACTION_ABORT:
             await self._emit_rtb(drone_handle, drone_id, home_base_id, f"↩️ {drone_id} RTB")
         elif action == ACTION_EMERGENCY_LAND:
-            nearest_id, nearest_name = self._nearest_base(order)
+            nearest_id, nearest_name = self._nearest_base(order, drone_position)
             await self._emit_rtb(
                 drone_handle,
                 drone_id,
@@ -226,7 +265,7 @@ class DeliveryWorkflow:
                 f"🛬 {drone_id} emergency landing at {nearest_name}",
             )
         elif action == ACTION_DIVERT_RECHARGE:
-            nearest_id, nearest_name = self._nearest_base(order)
+            nearest_id, nearest_name = self._nearest_base(order, drone_position)
             await self._emit_rtb(
                 drone_handle,
                 drone_id,
@@ -255,17 +294,19 @@ class DeliveryWorkflow:
         )
         await workflow.sleep(timedelta(seconds=2))
 
-    def _nearest_base(self, order: Order) -> tuple[str, str]:
-        """Pragmatic proxy for the drone's last-known position.
+    def _nearest_base(self, order: Order, ref: Coordinate | None = None) -> tuple[str, str]:
+        """Return the depot closest to `ref` (drone's live position) or, if missing, to the dropoff.
 
-        DeliveryWorkflow does not track the drone's live position (that lives
-        in DroneWorkflow and would require a query-through-activity to read
-        deterministically). Since incidents most commonly happen mid-flight
-        toward the dropoff, we use the dropoff point as the proxy location.
+        Live position is preferred so recovery decisions stay accurate when the
+        incident happens on the return leg or near pickup. The dropoff-based
+        fallback keeps the workflow progressing when telemetry is unavailable.
         """
-        dropoff = next(dp for dp in DELIVERY_POINTS if dp.id == order.dropoff_point_id)
-        ref_lat = dropoff.location.lat
-        ref_lon = dropoff.location.lon
+        if ref is not None:
+            ref_lat, ref_lon = ref.lat, ref.lon
+        else:
+            dropoff = next(dp for dp in DELIVERY_POINTS if dp.id == order.dropoff_point_id)
+            ref_lat = dropoff.location.lat
+            ref_lon = dropoff.location.lon
         nearest = min(
             DEPOTS,
             key=lambda b: math.hypot(b.location.lat - ref_lat, b.location.lon - ref_lon),

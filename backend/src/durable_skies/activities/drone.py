@@ -19,12 +19,13 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
+from pydantic import ValidationError
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from ..events import write_fleet_event
 from ..models import Coordinate, FleetEvent, FleetEventType, WorkflowState
-from ..telemetry import write_drone_telemetry
+from ..telemetry import read_drone_telemetries, write_drone_telemetry
 from .drone_signal import advance_leg, update_drone
 from .world import resolve_location, resolve_name
 
@@ -135,6 +136,20 @@ async def navigate_drone(
     await update_drone(drone_workflow_id, battery_pct=battery)
     await advance_leg(drone_workflow_id)
     return battery
+
+
+@activity.defn
+async def read_drone_position(drone_id: str) -> Coordinate | None:
+    """Return the drone's last known position from Redis telemetry, or None if unavailable."""
+    activity.logger.info("Reading live position for drone %s", drone_id)
+    entry = (await read_drone_telemetries([drone_id])).get(drone_id)
+    if entry is None:
+        return None
+    try:
+        return Coordinate.model_validate(entry["position"])
+    except (KeyError, ValidationError) as err:
+        activity.logger.warning("Unusable telemetry for %s: %s", drone_id, err)
+        return None
 
 
 @activity.defn
