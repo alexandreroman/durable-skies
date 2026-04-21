@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     temporal_namespace: str = Field(default="default")
 
     anthropic_model: str = Field(default="anthropic/claude-sonnet-4-6")
+    # Fast model used by summarizer roles (e.g. dispatcher analysts); anthropic_model stays for decision makers.
+    anthropic_fast_model: str = Field(default="anthropic/claude-haiku-4-5")
 
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000)

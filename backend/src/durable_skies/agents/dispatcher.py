@@ -54,17 +54,21 @@ def submit_dispatch(drone_id: str, reasoning: str, tool_context: ToolContext) ->
     return {"status": "ok"}
 
 
-def build_dispatcher_agent(model_name: str) -> SequentialAgent:
+def build_dispatcher_agent(
+    model_name: str,
+    analyst_model_name: str | None = None,
+) -> SequentialAgent:
+    analyst_model = analyst_model_name or model_name
     fleet_analyst = Agent(
         name="fleet_analyst",
-        model=TemporalModel(model_name=model_name),
+        model=TemporalModel(model_name=analyst_model),
         description="Summarizes the pool of idle drones.",
         instruction=_FLEET_ANALYST_INSTRUCTION,
         output_key="fleet_analysis",
     )
     order_analyst = Agent(
         name="order_analyst",
-        model=TemporalModel(model_name=model_name),
+        model=TemporalModel(model_name=analyst_model),
         description="Summarizes the pending order.",
         instruction=_ORDER_ANALYST_INSTRUCTION,
         output_key="order_analysis",

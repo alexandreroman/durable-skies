@@ -49,6 +49,7 @@ class FleetWorkflow:
         self._next_drone_idx = 0
         self._shutdown = False
         self._model_name: str | None = None
+        self._fast_model_name: str | None = None
 
     @workflow.run
     async def run(
@@ -58,8 +59,10 @@ class FleetWorkflow:
         initial_pending: list[Order] | None = None,
         initial_events: list[FleetEvent] | None = None,
         initial_next_drone_idx: int = 0,
+        fast_model_name: str | None = None,
     ) -> None:
         self._model_name = model_name
+        self._fast_model_name = fast_model_name
         if initial_drones is not None:
             self._drones = {d.id: d for d in initial_drones}
         if initial_pending is not None:
@@ -80,17 +83,16 @@ class FleetWorkflow:
                         list(self._pending),
                         list(self._events),
                         self._next_drone_idx,
+                        self._fast_model_name,
                     ],
                 )
             await workflow.wait_condition(lambda: bool(self._pending) or self._shutdown)
             if self._shutdown:
                 return
 
-            order = self._pending.popleft()
+            order = self._pending[0]
             idle_drones = [d for d in self._drones.values() if d.state == WorkflowState.IDLE]
             if not idle_drones:
-                # No idle drone — re-queue at head and wait for one to free up.
-                self._pending.appendleft(order)
                 await workflow.wait_condition(
                     lambda: self._has_idle_drone() or self._shutdown
                 )
@@ -104,9 +106,10 @@ class FleetWorkflow:
             ):
                 drone_id = self._pick_idle_drone()
             if drone_id is None:
-                self._pending.appendleft(order)
                 continue
 
+            # Keep the order visible in the queue during the dispatcher run so the UI chip doesn't flicker off.
+            self._pending.popleft()
             drone = self._drones[drone_id]
             # Optimistically mark the drone as dispatched so the next iteration
             # of the loop doesn't pick it again before the entity has signaled
@@ -130,7 +133,7 @@ class FleetWorkflow:
             return None
 
         try:
-            agent = build_dispatcher_agent(self._model_name)
+            agent = build_dispatcher_agent(self._model_name, analyst_model_name=self._fast_model_name)
             runner = InMemoryRunner(agent=agent, app_name="durable-skies")
             session = await runner.session_service.create_session(
                 app_name="durable-skies",
