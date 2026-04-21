@@ -7,8 +7,8 @@ dev: ## Run the frontend and backend in dev mode with hot-reload
 	@cd frontend && pnpm install --prefer-offline --silent
 	$(MAKE) -j3 worker-dev api-dev ui
 
-.PHONY: app
-app: ## Run the full stack in containers
+.PHONY: run
+run: ## Run the full stack in containers
 	docker-compose up
 
 .PHONY: worker

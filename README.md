@@ -2,10 +2,10 @@
 
 Durable multi-agent drone delivery demo built on
 [Google ADK][adk] and [Temporal][temporal].
-A fleet of six autonomous drones executes delivery
+A fleet of four autonomous drones executes delivery
 missions under the supervision of LLM-powered agents
-(Anthropic Claude Sonnet), with every LLM call and
-every tool invocation running as a durable Temporal
+(Anthropic Claude), with every LLM call and every
+tool invocation running as a durable Temporal
 Activity — crashes, restarts, and deploys never lose
 state mid-mission.
 
@@ -17,34 +17,43 @@ state mid-mission.
   call is recorded as a Temporal Activity, so agent
   reasoning is replayed deterministically after any
   crash.
-- **Durable orchestration** — a fleet-supervisor
-  workflow dispatches each incoming order to a
-  short-lived per-delivery workflow driven by an
-  ADK pilot agent.
-- **Claude Sonnet via LiteLLM** — the Google ADK
-  talks to Anthropic's Claude models through the
-  LiteLLM adapter.
-- **Live operations UI** — a Nuxt 4 dashboard
-  showing the fleet map and a per-drone status
-  panel.
-- **One-command local stack** — a Docker Compose
-  file brings up a Temporal dev-server container
+- **Agents at decision points** — a **dispatcher**
+  agent picks the best drone for each incoming
+  order, and an **anomaly handler** agent chooses a
+  recovery action when an in-flight incident occurs.
+  The mission itself is a deterministic activity
+  loop.
+- **Entity-per-drone orchestration** — a
+  `FleetWorkflow` supervisor routes orders to
+  long-lived per-drone `DroneWorkflow` entities,
+  each spawning a `DeliveryWorkflow` child per
+  order. A per-order `OrderWorkflow` makes every
+  order individually queryable in the Temporal UI.
+- **Claude via LiteLLM** — the Google ADK talks to
+  Anthropic's Claude models through the LiteLLM
+  adapter: Sonnet for decision-makers, Haiku for
+  the dispatcher's analyst sub-agents.
+- **Live operations frontend** — a Nuxt 4 dashboard
+  with the fleet map, a per-drone agent panel, and a
+  streaming event log.
+- **One-command local stack** — a Compose file
+  brings up a Temporal dev-server container
   (serving both the gRPC frontend and the built-in
-  Web UI) alongside a Redis container for live
-  drone telemetry; `make` targets start the worker,
-  the API, and the frontend.
+  Web UI) alongside a Redis container used for
+  live drone telemetry, the fleet event log, and
+  the drone availability registry; `make` targets
+  start the worker, the API, and the frontend.
 
 ## Prerequisites
 
-- Python 3.12+
-- [uv][uv] for Python dependency management
-- Node.js 20+ and [pnpm][pnpm]
-- Docker (for the local Temporal server)
-- An `ANTHROPIC_API_KEY` for Claude Sonnet
+- Docker (or a Compose-compatible runtime such as
+  Podman) for the local stack
+- An `ANTHROPIC_API_KEY` for Claude
 
 ## Getting Started
 
-Clone the repo, set your API key, and start the stack:
+Clone the repo, set your API key, and launch the
+full stack with Compose:
 
 ```bash
 git clone https://github.com/alexandreroman/durable-skies.git
@@ -53,31 +62,31 @@ cd durable-skies
 cp .env.example .env
 # Edit .env and set ANTHROPIC_API_KEY=sk-ant-...
 
-make dev
+make run   # or: docker-compose up
 ```
 
-`make dev` brings up Temporal, the worker, the API,
-and the Nuxt dev server in one shot. You can also
-run `make worker`, `make api`, and `make ui` in
-separate terminals if you prefer.
+This brings up Temporal, Redis, the worker, the API,
+and the Nuxt frontend in one shot.
 
 Open `http://localhost:3000` and click
-**Submit demo order** to see a drone mission run
+**Submit Orders** to see a drone mission run
 end-to-end.
 
 ## Usage
 
-Submit an order programmatically:
+Submit an order programmatically. Valid pickup bases
+are `base-north`, `base-south`, and `base-east`;
+valid delivery points are `dp-1` through `dp-8`:
 
 ```bash
 curl -X POST http://localhost:8000/orders \
   -H 'Content-Type: application/json' \
   -d '{
     "id": "order-001",
-    "pickup_base_id": "base-paris",
+    "pickup_base_id": "base-north",
     "dropoff_point_id": "dp-1",
     "payload_kg": 1.2,
-    "created_at": "2026-04-21T10:00:00Z",
+    "created_at": "2026-04-22T10:00:00Z",
     "status": "pending"
   }'
 ```
@@ -93,46 +102,81 @@ a `.env` file at the project root. All fields have
 sensible defaults; only `ANTHROPIC_API_KEY` is
 required.
 
-| Variable             | Description                             | Default                       |
-| -------------------- | --------------------------------------- | ----------------------------- |
-| `ANTHROPIC_API_KEY`  | Anthropic API key (required)            | —                             |
-| `TEMPORAL_ADDRESS`   | Temporal frontend host:port             | `localhost:7233`              |
-| `TEMPORAL_NAMESPACE` | Temporal namespace                      | `default`                     |
-| `REDIS_URL`          | Redis URL for live drone telemetry      | `redis://localhost:6379/0`    |
-| `ANTHROPIC_MODEL`    | Claude model (LiteLLM-style identifier) | `anthropic/claude-sonnet-4-6` |
-| `API_HOST`           | FastAPI bind address                    | `0.0.0.0`                     |
-| `API_PORT`           | FastAPI listen port                     | `8000`                        |
+| Variable               | Description                                   | Default                       |
+| ---------------------- | --------------------------------------------- | ----------------------------- |
+| `ANTHROPIC_API_KEY`    | Anthropic API key (required)                  | —                             |
+| `TEMPORAL_ADDRESS`     | Temporal frontend host:port                   | `localhost:7233`              |
+| `TEMPORAL_NAMESPACE`   | Temporal namespace                            | `default`                     |
+| `REDIS_URL`            | Redis URL for telemetry, events, availability | `redis://localhost:6379/0`    |
+| `ANTHROPIC_MODEL`      | Claude model for decision-making agents       | `anthropic/claude-sonnet-4-6` |
+| `ANTHROPIC_FAST_MODEL` | Claude model for summarizer sub-agents        | `anthropic/claude-haiku-4-5`  |
+| `API_HOST`             | FastAPI bind address                          | `0.0.0.0`                     |
+| `API_PORT`             | FastAPI listen port                           | `8000`                        |
 
 The Nuxt frontend reads `NUXT_PUBLIC_API_BASE` (default
 `http://localhost:8000`); set it if you serve the API
 on a different host.
 
+## Development
+
+For iterative work with hot-reload, run the backend
+and frontend directly on your host against the
+Compose-managed Temporal and Redis:
+
+```bash
+make -C backend install   # install Python deps
+make infra-up             # start Temporal + Redis only
+make dev                  # worker + API + frontend
+```
+
+`make dev` runs the worker, the API, and the
+frontend with hot-reload in one shot. You can also
+run `make worker`, `make api`, and `make ui` in
+separate terminals if you prefer.
+
+This flow additionally requires Python 3.12+,
+[uv][uv], Node.js 20+, and [pnpm][pnpm] on your
+host.
+
 ## Architecture
 
 ```mermaid
 graph TD
-    UI[Nuxt UI<br/>map · fleet panel]
-    API[FastAPI gateway]
+    FE[Frontend<br/>map · agent panel · event log]
+    API[Backend]
+    ORDER[OrderWorkflow<br/>per-order]
     FLEET[FleetWorkflow<br/>dispatcher]
-    DELIV[DroneDeliveryWorkflow<br/>per-order]
-    AGENT[ADK Pilot Agent<br/>Claude Sonnet]
-    ACTS[Drone + delivery<br/>activities]
+    DRONE[DroneWorkflow<br/>per-drone entity]
+    DELIV[DeliveryWorkflow<br/>per-order child]
+    DISP[ADK Dispatcher Agent]
+    ANOM[ADK Anomaly Agent]
+    ACTS[Drone + world<br/>activities]
     TEMPORAL[(Temporal Service)]
+    REDIS[(Redis)]
     CLAUDE[(Anthropic API)]
 
-    UI <--> API
+    FE <--> API
     API -->|signal / query| TEMPORAL
+    API -->|read telemetry| REDIS
+    TEMPORAL --> ORDER
     TEMPORAL --> FLEET
-    FLEET -->|child workflow| DELIV
-    DELIV --> AGENT
-    AGENT -->|TemporalModel| CLAUDE
-    AGENT -->|activity_tool| ACTS
+    TEMPORAL --> DRONE
+    ORDER -->|signal order| FLEET
+    FLEET --> DISP
+    FLEET -->|signal| DRONE
+    DRONE -->|child workflow| DELIV
+    DELIV --> ANOM
+    DELIV --> ACTS
+    DISP -->|TemporalModel| CLAUDE
+    ANOM -->|TemporalModel| CLAUDE
+    DRONE -->|availability| REDIS
+    ACTS -->|telemetry + events| REDIS
 ```
 
-| Module     | Description                                                                 |
-| ---------- | --------------------------------------------------------------------------- |
-| `backend`  | Python package with Temporal workflows, activities, ADK agents, and API.    |
-| `frontend` | Nuxt 4 + Vue 3 + Tailwind 4 dashboard for monitoring the fleet.             |
+| Module     | Description                                                                                                    |
+| ---------- | -------------------------------------------------------------------------------------------------------------- |
+| `backend`  | Python package with the FastAPI HTTP API, Temporal workflows, activities, and ADK dispatcher + anomaly agents. |
+| `frontend` | Nuxt 4 + Vue 3 + Tailwind 4 dashboard for monitoring the fleet.                                                |
 
 ## License
 
