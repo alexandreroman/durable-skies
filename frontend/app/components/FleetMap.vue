@@ -14,13 +14,13 @@ const emit = defineEmits<{ select: [id: string | null] }>();
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 
-// Client-side tween state. The backend polls every 500 ms and replaces the
-// `drones` prop wholesale, which would make drones jump between snapshots.
-// We keep a non-reactive Map of per-drone tweens and lerp between the last
-// rendered position and the newly-polled target over TWEEN_DURATION_MS.
-// The map is mutated in place — this is a render-layer concern, not
-// application state, so it deliberately sits outside Vue's reactivity.
-const TWEEN_DURATION_MS = 500;
+// Client-side tween state. The backend's position-update cadence is not known
+// upfront and may vary, so we track each drone's observed inter-update interval
+// with an EWMA and tween over ~that interval — this avoids the freeze-then-slide
+// artifact that a fixed, too-short duration produces between polls.
+const TWEEN_DURATION_MS_DEFAULT = 2000;
+const TWEEN_SAFETY_FACTOR = 1.15;
+const TWEEN_INTERVAL_ALPHA = 0.35;
 
 interface TweenEntry {
   fromLat: number;
@@ -28,13 +28,15 @@ interface TweenEntry {
   targetLat: number;
   targetLon: number;
   startedAt: number;
+  durationMs: number;
+  smoothedIntervalMs: number;
 }
 
 const tweens = new Map<string, TweenEntry>();
 
 function tweenProgress(entry: TweenEntry, now: number): number {
-  if (entry.startedAt === 0) return 1;
-  return Math.min(1, Math.max(0, (now - entry.startedAt) / TWEEN_DURATION_MS));
+  if (entry.startedAt === 0 || entry.durationMs <= 0) return 1;
+  return Math.min(1, Math.max(0, (now - entry.startedAt) / entry.durationMs));
 }
 
 function renderedPosition(droneId: string, now: number): { lat: number; lon: number } {
@@ -66,6 +68,8 @@ watch(
           targetLat: drone.position.lat,
           targetLon: drone.position.lon,
           startedAt: 0,
+          durationMs: 0,
+          smoothedIntervalMs: TWEEN_DURATION_MS_DEFAULT,
         });
         continue;
       }
@@ -73,6 +77,11 @@ watch(
         const t = tweenProgress(entry, now);
         const currentLat = entry.fromLat + (entry.targetLat - entry.fromLat) * t;
         const currentLon = entry.fromLon + (entry.targetLon - entry.fromLon) * t;
+        const rawInterval = entry.startedAt === 0 ? TWEEN_DURATION_MS_DEFAULT : now - entry.startedAt;
+        const clampedInterval = Math.min(5000, Math.max(200, rawInterval));
+        entry.smoothedIntervalMs =
+          TWEEN_INTERVAL_ALPHA * clampedInterval + (1 - TWEEN_INTERVAL_ALPHA) * entry.smoothedIntervalMs;
+        entry.durationMs = entry.smoothedIntervalMs * TWEEN_SAFETY_FACTOR;
         entry.fromLat = currentLat;
         entry.fromLon = currentLon;
         entry.targetLat = drone.position.lat;
