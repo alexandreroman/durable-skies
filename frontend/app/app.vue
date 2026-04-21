@@ -83,7 +83,9 @@ const {
           :selected-drone="selectedDrone"
           @select="(id) => selectDrone(id)"
         />
-        <EventLog class="max-h-[200px]" :events="events" />
+        <Transition name="ds-event-log">
+          <EventLog v-if="events.length > 0" class="h-[200px]" :events="events" />
+        </Transition>
       </div>
     </div>
   </div>
@@ -109,5 +111,21 @@ const {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   color: var(--ds-violet);
+}
+.ds-event-log-enter-active {
+  transition: opacity 220ms ease-out, transform 220ms ease-out;
+}
+.ds-event-log-leave-active {
+  transition: opacity 160ms ease-in, transform 160ms ease-in;
+}
+.ds-event-log-enter-from,
+.ds-event-log-leave-to {
+  opacity: 0;
+  transform: translateY(12px);
+}
+.ds-event-log-enter-to,
+.ds-event-log-leave-from {
+  opacity: 1;
+  transform: translateY(0);
 }
 </style>
