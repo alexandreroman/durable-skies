@@ -9,6 +9,7 @@ session state so the workflow can read it back deterministically.
 from google.adk.agents import Agent, ParallelAgent, SequentialAgent
 from google.adk.tools import ToolContext
 from temporalio.contrib.google_adk_agents import TemporalModel
+from temporalio.workflow import ActivityConfig
 
 DISPATCH_DECISION_KEY = "dispatch_decision"
 
@@ -61,14 +62,20 @@ def build_dispatcher_agent(
     analyst_model = analyst_model_name or model_name
     fleet_analyst = Agent(
         name="fleet_analyst",
-        model=TemporalModel(model_name=analyst_model),
+        model=TemporalModel(
+            model_name=analyst_model,
+            activity_config=ActivityConfig(summary="Dispatcher · Fleet analyst"),
+        ),
         description="Summarizes the pool of idle drones.",
         instruction=_FLEET_ANALYST_INSTRUCTION,
         output_key="fleet_analysis",
     )
     order_analyst = Agent(
         name="order_analyst",
-        model=TemporalModel(model_name=analyst_model),
+        model=TemporalModel(
+            model_name=analyst_model,
+            activity_config=ActivityConfig(summary="Dispatcher · Order analyst"),
+        ),
         description="Summarizes the pending order.",
         instruction=_ORDER_ANALYST_INSTRUCTION,
         output_key="order_analysis",
@@ -79,7 +86,10 @@ def build_dispatcher_agent(
     )
     dispatcher_picker = Agent(
         name="dispatcher_picker",
-        model=TemporalModel(model_name=model_name),
+        model=TemporalModel(
+            model_name=model_name,
+            activity_config=ActivityConfig(summary="Dispatcher · Drone picker"),
+        ),
         description="Picks the drone that should handle the order.",
         instruction=_PICKER_INSTRUCTION,
         tools=[submit_dispatch],

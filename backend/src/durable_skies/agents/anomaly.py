@@ -8,6 +8,7 @@ the workflow branches deterministically on a validated action string.
 from google.adk.agents import Agent
 from google.adk.tools import ToolContext
 from temporalio.contrib.google_adk_agents import TemporalModel
+from temporalio.workflow import ActivityConfig
 
 RECOVERY_DECISION_KEY = "recovery_decision"
 
@@ -42,7 +43,10 @@ def submit_recovery(action: str, reasoning: str, tool_context: ToolContext) -> d
 def build_anomaly_agent(model_name: str) -> Agent:
     return Agent(
         name="anomaly_handler",
-        model=TemporalModel(model_name=model_name),
+        model=TemporalModel(
+            model_name=model_name,
+            activity_config=ActivityConfig(summary="Anomaly handler · Recovery action"),
+        ),
         description="Picks a recovery action after an in-flight drone incident.",
         instruction=_ANOMALY_INSTRUCTION,
         tools=[submit_recovery],
