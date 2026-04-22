@@ -249,8 +249,33 @@ function orderLabel(orderId: string): string {
   vertical-align: middle;
 }
 
+.ds-wf-row {
+  position: relative;
+}
+
 .ds-wf-row.is-paused {
   opacity: 0.72;
+}
+
+.ds-wf-row.is-paused::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.08) 0,
+    rgba(255, 255, 255, 0.08) 4px,
+    transparent 4px,
+    transparent 9px
+  );
+  background-attachment: fixed;
+}
+
+.ds-wf-row.is-paused > * {
+  position: relative;
+  z-index: 1;
 }
 
 .ds-wf-row.is-paused .ds-wf-name {
