@@ -127,8 +127,10 @@ budget. Future edits must respect:
    add_signal="battery_critical")` AND writes one
    final telemetry entry with `state=INCIDENT`.
    The signal is required — it triggers
-   `_sync_to_fleet` so the dispatcher agent sees
-   the drone is out.
+   `_publish_availability` on the drone entity,
+   so the dispatcher (which reads the
+   `fleet:availability` Redis hash) sees the
+   drone is out.
 5. **Graceful Redis degradation.** If Redis is
    down, `read_drone_telemetries` returns all
    `None` and `read_fleet_events` returns `[]`;

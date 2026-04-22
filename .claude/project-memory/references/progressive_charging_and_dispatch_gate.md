@@ -138,9 +138,14 @@ raise it to force blocking after every mission.
 **How to apply:**
 
 - If you add a new dispatch code path (new
-  agent, manual override, etc.), repeat the
-  `state == IDLE and battery_pct > _MIN_DISPATCH_BATTERY_PCT`
-  check.
+  agent, manual override, etc.), repeat the full
+  `state == IDLE and battery_pct > _MIN_DISPATCH_BATTERY_PCT and not paused`
+  check. The `paused` clause is the
+  operator-intent flag toggled by the
+  `pause_drone` / `resume_drone` signals on
+  `DroneWorkflow`; it lives on `DroneAvailability`
+  so the filter can read it alongside state and
+  battery.
 - If you tune the nav drain (`_BATTERY_PER_STEP`
   × `_NAV_STEPS`), re-check how many deliveries
   a drone survives before falling below the

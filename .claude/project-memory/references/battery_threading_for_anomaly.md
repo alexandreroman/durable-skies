@@ -29,7 +29,7 @@ to a low battery via
 forcing that drone to be picked (e.g. by
 staging the others as `DISPATCHED`). Battery
 now also carries across missions — see
-[progressive charging + 50% dispatch gate](progressive_charging_and_dispatch_gate.md).
+[progressive charging + 40% dispatch gate](progressive_charging_and_dispatch_gate.md).
 
 **How to apply:** keep the `battery_start_pct`
 thread intact when touching

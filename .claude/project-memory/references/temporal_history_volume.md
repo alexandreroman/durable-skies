@@ -75,7 +75,7 @@ positional arg and `run()` accepts it via
 cross-mission entity state (per-drone odometer,
 cumulative hours, etc.) must be threaded through
 CAN the same way. See
-[progressive charging + 50% dispatch gate](progressive_charging_and_dispatch_gate.md).
+[progressive charging + 40% dispatch gate](progressive_charging_and_dispatch_gate.md).
 
 **Why:** silently adding a new field (say, a
 per-order metrics counter) without threading it
@@ -114,7 +114,8 @@ first deployed, its next replay will try to
 issue a `continue_as_new` command at an event
 where the old history shows a different command
 (typically a `SignalExternalWorkflowExecution`
-from `_sync_to_fleet`). The worker fails with:
+emitted by an activity-originated drone update).
+The worker fails with:
 
 ```
 Nondeterminism error: Continue as new workflow

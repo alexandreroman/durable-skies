@@ -50,20 +50,33 @@ variant 2 rollout: FleetWorkflow dropped from
 ## Invariants to preserve
 
 - **Any new `@workflow.signal` on DroneWorkflow
-  that mutates the state enum MUST end with
-  `await self._publish_availability()`** —
-  otherwise the dispatcher will think a busy
-  drone is still idle (or vice-versa) until the
-  next state transition. Capture `prev_state`,
-  apply mutations, then publish only if
-  `self._state != prev_state`. Same pattern as
-  `update_runtime`.
+  that mutates a dispatch-eligibility field MUST
+  end with `await self._publish_availability()`** —
+  otherwise the dispatcher will think a busy or
+  paused drone is still idle (or vice-versa) until
+  the next transition. The dispatch-eligibility
+  fields today are `self._state` and
+  `self._paused` (both read by the `dispatchable`
+  filter in `fleet.py`). Capture the previous
+  value, apply mutations, then publish only when
+  it actually changed. `update_runtime` does this
+  for state; `pause_drone` / `resume_drone` do it
+  for `_paused` (they early-return when already
+  in the target state, so a publish implies a
+  real transition).
 - **Signal handlers that only mutate
   flight_plan, position, battery, signals, or
   target_point_id MUST NOT publish** — the API's
   pull keeps the UI current, and each redundant
   Redis write still costs 1 marker event on
   DroneWorkflow (local activity overhead).
+- **If a new dispatch-eligibility field is added
+  to `DroneAvailability` (beyond `state` and
+  `paused`), every signal that mutates it must
+  also call `_publish_availability()`, and the
+  CAN args list in `run()` must thread the field
+  through — otherwise it resets on every
+  continue-as-new.
 - **Do NOT filter on `updated_at` in
   `read_drone_availabilities`.** A staleness
   filter defeats the "write only on enum

@@ -20,3 +20,5 @@
 - [Redis split: telemetry + events + availability](references/redis_telemetry_split.md) — position/battery (10s TTL), fleet event log (LTRIM 200), and drone availability (hash) live in Redis; all Redis writes must never raise
 - [Staleness filters anti-pattern](references/staleness_filter_antipattern.md) — do not filter Redis reads on `updated_at` when the writer only pushes on state change — they cancel out and strand the system
 - [Progressive charging + 40% dispatch gate + CHARGING state](references/progressive_charging_and_dispatch_gate.md) — battery carries via DroneWorkflow sleep loop; dispatcher filters on > 40%; at-home drones split IDLE/CHARGING
+- [Compensation paths must stream telemetry, not teleport](references/compensation_must_stream_telemetry.md) — recovery flights route through fly_drone_to_base; FleetMap filter hides IDLE/CHARGING/COMPLETED so teleports vanish
+- [Freeze workflow _position at incident boundary](references/freeze_position_at_incident.md) — navigate_drone must signal position at battery_critical; DroneWorkflow._position otherwise defaults to home and lies when Redis TTL expires
