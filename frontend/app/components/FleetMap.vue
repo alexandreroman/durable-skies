@@ -408,6 +408,6 @@ function handleMouseLeave(): void {
         <span :style="{ color: style.color }">{{ style.label }}</span>
       </div>
     </div>
-    <img src="/temporal-logo.png" alt="Temporal" class="ds-map-logo" />
+    <img src="/temporal-logo.png" alt="Temporal" class="ds-map-logo">
   </div>
 </template>

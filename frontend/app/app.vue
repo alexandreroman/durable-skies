@@ -72,7 +72,7 @@ const mapFocusedDrone = computed(() => {
           class="ds-dispatching-pill"
           title="Dispatcher agent is choosing a drone"
         >
-          <span class="ds-dispatching-dot" aria-hidden="true"></span>
+          <span class="ds-dispatching-dot" aria-hidden="true" />
           <span>Dispatching</span>
         </span>
         <span
