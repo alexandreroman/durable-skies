@@ -137,12 +137,8 @@ class DeliveryWorkflow:
                 retry_policy=fast_retry,
             )
         except (ActivityError, ApplicationError) as err:
-            action, drone_position = await self._run_anomaly_handler(
-                drone_id, order, home_base_id, model_name
-            )
-            await self._execute_recovery(
-                action, drone_handle, drone_id, home_base_id, order, drone_position
-            )
+            action, drone_position = await self._run_anomaly_handler(drone_id, order, home_base_id, model_name)
+            await self._execute_recovery(action, drone_handle, drone_id, home_base_id, order, drone_position)
             await self._finalize(drone_handle, drone_id, home_base_id, order.id, incident=True)
             return f"Order {order.id} aborted ({action}): {err}"
 
