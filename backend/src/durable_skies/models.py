@@ -16,6 +16,11 @@ class Coordinate(BaseModel):
     lon: float
 
 
+class DroneTelemetrySnapshot(BaseModel):
+    position: Coordinate
+    battery_pct: float
+
+
 class Base(BaseModel):
     id: str
     name: str

@@ -24,7 +24,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from ..events import write_fleet_event
-from ..models import Coordinate, FleetEvent, FleetEventType, WorkflowState
+from ..models import Coordinate, DroneTelemetrySnapshot, FleetEvent, FleetEventType, WorkflowState
 from ..telemetry import read_drone_telemetries, write_drone_telemetry
 from .drone_signal import advance_leg, update_drone
 from .world import resolve_location, resolve_name
@@ -122,6 +122,7 @@ async def navigate_drone(
             await update_drone(
                 drone_workflow_id,
                 state=WorkflowState.INCIDENT,
+                position=position,
                 battery_pct=battery,
                 add_signal="battery_critical",
             )
@@ -139,17 +140,58 @@ async def navigate_drone(
 
 
 @activity.defn
-async def read_drone_position(drone_id: str) -> Coordinate | None:
-    """Return the drone's last known position from Redis telemetry, or None if unavailable."""
-    activity.logger.info("Reading live position for drone %s", drone_id)
+async def read_drone_telemetry(drone_id: str) -> DroneTelemetrySnapshot | None:
+    """Return the drone's last known position and battery from Redis telemetry, or None if unavailable."""
+    activity.logger.info("Reading live telemetry for drone %s", drone_id)
     entry = (await read_drone_telemetries([drone_id])).get(drone_id)
     if entry is None:
         return None
     try:
-        return Coordinate.model_validate(entry["position"])
-    except (KeyError, ValidationError) as err:
+        return DroneTelemetrySnapshot(
+            position=Coordinate.model_validate(entry["position"]),
+            battery_pct=float(entry["battery_pct"]),
+        )
+    except (KeyError, TypeError, ValueError, ValidationError) as err:
         activity.logger.warning("Unusable telemetry for %s: %s", drone_id, err)
         return None
+
+
+@activity.defn
+async def fly_drone_to_base(
+    drone_id: str,
+    drone_workflow_id: str,
+    from_coord: Coordinate,
+    to_point_id: str,
+    battery_start_pct: float,
+) -> float:
+    """Fly a drone from an off-plan coordinate to a named base, streaming
+    RETURNING telemetry to Redis.
+
+    Used by DeliveryWorkflow's compensation saga: after an in-flight incident
+    the drone's live position is off-plan, so this activity interpolates from
+    there to the recovery base. Unlike navigate_drone it does not advance the
+    flight plan nor inject incidents.
+    """
+    end = resolve_location(to_point_id)
+    battery = battery_start_pct
+    for step in range(1, _NAV_STEPS + 1):
+        progress = step / _NAV_STEPS
+        position = Coordinate(
+            lat=_lerp(from_coord.lat, end.lat, progress),
+            lon=_lerp(from_coord.lon, end.lon, progress),
+        )
+        battery = max(0.0, battery - _BATTERY_PER_STEP)
+        await write_drone_telemetry(
+            drone_id,
+            position=position,
+            battery_pct=battery,
+            target_point_id=to_point_id,
+            state=WorkflowState.RETURNING,
+        )
+        activity.heartbeat(progress)
+        await asyncio.sleep(_NAV_STEP_DELAY_S)
+    await update_drone(drone_workflow_id, battery_pct=battery)
+    return battery
 
 
 @activity.defn

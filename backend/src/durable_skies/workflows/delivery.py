@@ -32,14 +32,15 @@ with workflow.unsafe.imports_passed_through():
 from .. import order_workflow_id
 from ..activities import (
     dropoff_package,
+    fly_drone_to_base,
     land_drone,
     log_fleet_event,
     navigate_drone,
     pickup_package,
-    read_drone_position,
+    read_drone_telemetry,
     takeoff_drone,
 )
-from ..models import Coordinate, FleetEvent, FleetEventType, Order, WorkflowState
+from ..models import Coordinate, DroneTelemetrySnapshot, FleetEvent, FleetEventType, Order, WorkflowState
 from ..world import DELIVERY_POINTS, DEPOTS
 
 _LOG_EVENT_TIMEOUT = timedelta(seconds=5)
@@ -137,8 +138,10 @@ class DeliveryWorkflow:
                 retry_policy=fast_retry,
             )
         except (ActivityError, ApplicationError) as err:
-            action, drone_position = await self._run_anomaly_handler(drone_id, order, home_base_id, model_name)
-            await self._execute_recovery(action, drone_handle, drone_id, home_base_id, order, drone_position)
+            action, snapshot = await self._run_anomaly_handler(drone_id, order, home_base_id, model_name)
+            await self._execute_recovery(
+                action, drone_handle, drone_id, drone_workflow_id, home_base_id, order, snapshot
+            )
             await self._finalize(drone_handle, drone_id, home_base_id, order.id, incident=True)
             return f"Order {order.id} aborted ({action}): {err}"
 
@@ -165,22 +168,22 @@ class DeliveryWorkflow:
         order: Order,
         home_base_id: str,
         model_name: str,
-    ) -> tuple[str, Coordinate | None]:
-        """Invoke the anomaly agent; return a validated recovery action and the drone's live position.
+    ) -> tuple[str, DroneTelemetrySnapshot | None]:
+        """Invoke the anomaly agent; return a validated recovery action and the drone's live telemetry.
 
         Any failure inside the agent run falls back to ACTION_ABORT so the
         workflow always has a safe recovery path.
         """
         try:
-            drone_position = await workflow.execute_activity(
-                read_drone_position,
+            snapshot = await workflow.execute_activity(
+                read_drone_telemetry,
                 drone_id,
                 start_to_close_timeout=timedelta(seconds=5),
                 retry_policy=RetryPolicy(maximum_attempts=2),
             )
         except (ActivityError, ApplicationError) as err:
-            workflow.logger.warning("Failed to read live position for %s: %s", drone_id, err)
-            drone_position = None
+            workflow.logger.warning("Failed to read live telemetry for %s: %s", drone_id, err)
+            snapshot = None
 
         try:
             agent = build_anomaly_agent(model_name)
@@ -190,7 +193,7 @@ class DeliveryWorkflow:
                 user_id=drone_id,
             )
 
-            prompt = self._build_anomaly_prompt(drone_id, order, home_base_id, drone_position)
+            prompt = self._build_anomaly_prompt(drone_id, order, home_base_id, snapshot)
             async for _ in runner.run_async(
                 user_id=drone_id,
                 session_id=session.id,
@@ -214,30 +217,31 @@ class DeliveryWorkflow:
             action = ACTION_ABORT
 
         await self._log_event(f"🤖 Recovery agent → {action}", FleetEventType.INFO)
-        return action, drone_position
+        return action, snapshot
 
     def _build_anomaly_prompt(
         self,
         drone_id: str,
         order: Order,
         home_base_id: str,
-        drone_position: Coordinate | None,
+        snapshot: DroneTelemetrySnapshot | None,
     ) -> str:
         base = (
             f"Drone {drone_id} is executing order {order.id} and has raised an in-flight "
             "incident (type: battery_critical). Pick the recovery action that best balances "
             "safety and mission continuity."
         )
-        if drone_position is None:
+        if snapshot is None:
             return base
+        position = snapshot.position
         home = next(b.location for b in DEPOTS if b.id == home_base_id)
-        nearest_id, _ = self._nearest_base(order, drone_position)
+        nearest_id, _ = self._nearest_base(order, position)
         nearest = next(b.location for b in DEPOTS if b.id == nearest_id)
-        d_home = math.hypot(drone_position.lat - home.lat, drone_position.lon - home.lon)
-        d_nearest = math.hypot(drone_position.lat - nearest.lat, drone_position.lon - nearest.lon)
+        d_home = math.hypot(position.lat - home.lat, position.lon - home.lon)
+        d_nearest = math.hypot(position.lat - nearest.lat, position.lon - nearest.lon)
         return (
             f"{base}\n"
-            f"Live position: lat={drone_position.lat:.4f}, lon={drone_position.lon:.4f}.\n"
+            f"Live position: lat={position.lat:.4f}, lon={position.lon:.4f}.\n"
             f"Distance to home base: {d_home:.4f}; distance to nearest base: {d_nearest:.4f}."
         )
 
@@ -246,27 +250,33 @@ class DeliveryWorkflow:
         action: str,
         drone_handle,
         drone_id: str,
+        drone_workflow_id: str,
         home_base_id: str,
         order: Order,
-        drone_position: Coordinate | None,
+        snapshot: DroneTelemetrySnapshot | None,
     ) -> None:
+        ref = snapshot.position if snapshot else None
         if action == ACTION_ABORT:
-            await self._emit_rtb(drone_handle, drone_id, home_base_id, f"↩️ {drone_id} RTB")
+            await self._emit_rtb(drone_handle, drone_id, drone_workflow_id, home_base_id, f"↩️ {drone_id} RTB", snapshot)
         elif action == ACTION_EMERGENCY_LAND:
-            nearest_id, nearest_name = self._nearest_base(order, drone_position)
+            nearest_id, nearest_name = self._nearest_base(order, ref)
             await self._emit_rtb(
                 drone_handle,
                 drone_id,
+                drone_workflow_id,
                 nearest_id,
                 f"🛬 {drone_id} emergency landing at {nearest_name}",
+                snapshot,
             )
         elif action == ACTION_DIVERT_RECHARGE:
-            nearest_id, nearest_name = self._nearest_base(order, drone_position)
+            nearest_id, nearest_name = self._nearest_base(order, ref)
             await self._emit_rtb(
                 drone_handle,
                 drone_id,
+                drone_workflow_id,
                 nearest_id,
                 f"🔋 {drone_id} diverting to {nearest_name} to recharge",
+                snapshot,
             )
             await self._log_event(f"↩️ {drone_id} returning home", FleetEventType.SIGNAL)
 
@@ -274,8 +284,10 @@ class DeliveryWorkflow:
         self,
         drone_handle,
         drone_id: str,
+        drone_workflow_id: str,
         target_base_id: str,
         event_message: str,
+        snapshot: DroneTelemetrySnapshot | None,
         event_type: FleetEventType = FleetEventType.SIGNAL,
     ) -> None:
         await drone_handle.signal("low_battery")
@@ -288,7 +300,20 @@ class DeliveryWorkflow:
                 "add_signal": "incident",
             },
         )
-        await workflow.sleep(timedelta(seconds=2))
+        if snapshot is not None:
+            try:
+                await workflow.execute_activity(
+                    fly_drone_to_base,
+                    args=[drone_id, drone_workflow_id, snapshot.position, target_base_id, snapshot.battery_pct],
+                    start_to_close_timeout=timedelta(minutes=5),
+                    heartbeat_timeout=timedelta(seconds=5),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+            except (ActivityError, ApplicationError) as err:
+                # Best-effort: _finalize will still teleport + land so the workflow completes.
+                workflow.logger.warning("fly_drone_to_base failed for %s: %s", drone_id, err)
+        else:
+            await workflow.sleep(timedelta(seconds=2))
 
     def _nearest_base(self, order: Order, ref: Coordinate | None = None) -> tuple[str, str]:
         """Return the depot closest to `ref` (drone's live position) or, if missing, to the dropoff.
