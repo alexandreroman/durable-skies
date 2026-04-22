@@ -12,6 +12,8 @@ tool invocation running as a durable Temporal
 Activity — crashes, restarts, and deploys never lose
 state mid-mission.
 
+https://github.com/user-attachments/assets/cbd3f3e9-febf-42f1-ab16-1102ff466446
+
 ## Features
 
 - **Durable agents** — every ADK LLM call and tool
