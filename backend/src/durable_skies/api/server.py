@@ -22,14 +22,21 @@ from temporalio.contrib.google_adk_agents import GoogleAdkPlugin
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
-from .. import TASK_QUEUE, drone_workflow_id, order_workflow_id
-from ..availability import close_availability_client
+from .. import MIN_DISPATCH_BATTERY_PCT, TASK_QUEUE, drone_workflow_id, order_workflow_id
 from ..config import get_settings
-from ..events import close_events_client, read_fleet_events
+from ..events import read_fleet_events
 from ..models import Coordinate, DroneRuntimeState, FleetState, Order, WorkflowState
-from ..telemetry import close_telemetry_client, read_drone_telemetries
+from ..redis_client import close_redis_client
+from ..telemetry import read_drone_telemetries
 from ..workflows import DroneWorkflow, FleetWorkflow, OrderWorkflow
 from ..world import initial_drone_startups, initial_drones
+
+# Baseline fleet definitions are constant at runtime; compute once so the 500 ms
+# /fleet polling loop doesn't rebuild Pydantic models on every tick. Consumers
+# must treat these as read-only — `_overlay_telemetry` already uses model_copy.
+_BASELINE_DRONES: list[DroneRuntimeState] = initial_drones()
+_BASELINE_DRONES_BY_ID: dict[str, DroneRuntimeState] = {d.id: d for d in _BASELINE_DRONES}
+_BASELINE_DRONE_STARTUPS: list[tuple[str, str, str, Coordinate]] = initial_drone_startups()
 
 FLEET_WORKFLOW_ID = "fleet-supervisor"
 
@@ -60,7 +67,7 @@ async def lifespan(app: FastAPI):
 
     # Start one DroneWorkflow per drone. These are long-lived entity workflows
     # that own per-drone runtime state and route orders to DeliveryWorkflow children.
-    for drone_id, name, home_base_id, home_location in initial_drone_startups():
+    for drone_id, name, home_base_id, home_location in _BASELINE_DRONE_STARTUPS:
         wf_id = drone_workflow_id(drone_id)
         try:
             await client.start_workflow(
@@ -82,9 +89,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await close_telemetry_client()
-        await close_events_client()
-        await close_availability_client()
+        await close_redis_client()
 
 
 app = FastAPI(title="durable-skies", lifespan=lifespan)
@@ -136,9 +141,6 @@ def _overlay_telemetry(drone: DroneRuntimeState, telemetry: dict | None) -> Dron
     return drone.model_copy(update=update) if update else drone
 
 
-_MIN_DISPATCH_BATTERY_PCT = 40.0
-
-
 @app.get("/fleet", response_model=FleetState)
 async def get_fleet() -> FleetState:
     client: Client = app.state.client
@@ -149,8 +151,7 @@ async def get_fleet() -> FleetState:
     # per-drone queries provide business state (state enum, signals, flight_plan, current_order_id);
     # Redis telemetry provides live position/battery on top; the fleet event log comes from Redis.
     # Fire everything in parallel.
-    baseline_drones = {d.id: d for d in initial_drones()}
-    drone_ids = list(baseline_drones.keys())
+    drone_ids = list(_BASELINE_DRONES_BY_ID.keys())
     fleet_task = asyncio.create_task(asyncio.wait_for(fleet_handle.query(FleetWorkflow.get_fleet_state), timeout=2.0))
     drone_tasks: dict[str, asyncio.Task[DroneRuntimeState | None]] = {
         drone_id: asyncio.create_task(_query_drone(client, drone_id)) for drone_id in drone_ids
@@ -179,14 +180,12 @@ async def get_fleet() -> FleetState:
 
     merged: list[DroneRuntimeState] = []
     for drone_id in drone_ids:
-        base = baseline_drones[drone_id]
+        base = _BASELINE_DRONES_BY_ID[drone_id]
         queried = drone_tasks[drone_id].result() or base
         merged.append(_overlay_telemetry(queried, telemetries.get(drone_id)))
 
     dispatchable = sum(
-        1
-        for d in merged
-        if d.state == WorkflowState.IDLE and d.battery_pct > _MIN_DISPATCH_BATTERY_PCT and not d.paused
+        1 for d in merged if d.state == WorkflowState.IDLE and d.battery_pct > MIN_DISPATCH_BATTERY_PCT and not d.paused
     )
     return fleet_state.model_copy(
         update={
@@ -213,7 +212,7 @@ async def submit_order(order: Order) -> dict[str, str]:
 
 
 def _assert_known_drone(drone_id: str) -> None:
-    if not any(d.id == drone_id for d in initial_drones()):
+    if drone_id not in _BASELINE_DRONES_BY_ID:
         raise HTTPException(status_code=404, detail=f"unknown drone id: {drone_id}")
 
 

@@ -16,34 +16,18 @@ and swallows — a failed availability write must never break a mission.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 
-import redis.asyncio as redis
 from pydantic import ValidationError
 from redis.exceptions import RedisError
 
-from .config import get_settings
 from .models import DroneAvailability
+from .redis_client import get_redis_client
 
 log = logging.getLogger("durable_skies.availability")
 
 _AVAILABILITY_KEY = "fleet:availability"
-
-_client: redis.Redis | None = None
-_client_lock = asyncio.Lock()
-
-
-async def get_availability_client() -> redis.Redis:
-    global _client
-    if _client is not None:
-        return _client
-    async with _client_lock:
-        if _client is None:
-            settings = get_settings()
-            _client = redis.from_url(settings.redis_url, decode_responses=True)
-    return _client
 
 
 async def write_drone_availability(availability: DroneAvailability) -> None:
@@ -56,7 +40,7 @@ async def write_drone_availability(availability: DroneAvailability) -> None:
     """
     payload = availability.model_dump_json()
     try:
-        client = await get_availability_client()
+        client = await get_redis_client()
         await client.hset(_AVAILABILITY_KEY, availability.drone_id, payload)
     except (RedisError, OSError) as err:
         log.warning("Failed to write availability for %s: %s", availability.drone_id, err)
@@ -70,7 +54,7 @@ async def read_drone_availabilities() -> list[DroneAvailability]:
     on any Redis error — the caller defers dispatch and keeps orders pending.
     """
     try:
-        client = await get_availability_client()
+        client = await get_redis_client()
         raw = await client.hgetall(_AVAILABILITY_KEY)
     except (RedisError, OSError) as err:
         log.warning("Failed to read availability: %s", err)
@@ -85,15 +69,3 @@ async def read_drone_availabilities() -> list[DroneAvailability]:
             continue
         entries.append(entry)
     return entries
-
-
-async def close_availability_client() -> None:
-    global _client
-    if _client is None:
-        return
-    try:
-        await _client.aclose()
-    except (RedisError, OSError) as err:
-        log.warning("Error closing Redis client: %s", err)
-    finally:
-        _client = None

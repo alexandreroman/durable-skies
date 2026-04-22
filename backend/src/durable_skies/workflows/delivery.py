@@ -34,16 +34,14 @@ from ..activities import (
     dropoff_package,
     fly_drone_to_base,
     land_drone,
-    log_fleet_event,
     navigate_drone,
     pickup_package,
     read_drone_telemetry,
     takeoff_drone,
 )
-from ..models import Coordinate, DroneTelemetrySnapshot, FleetEvent, FleetEventType, Order, WorkflowState
+from ..models import Coordinate, DroneTelemetrySnapshot, FleetEventType, Order, WorkflowState
 from ..world import DELIVERY_POINTS, DEPOTS
-
-_LOG_EVENT_TIMEOUT = timedelta(seconds=5)
+from ._helpers import log_event
 
 
 @workflow.defn
@@ -117,7 +115,7 @@ class DeliveryWorkflow:
             # position/battery to Redis), so we mark the RETURNING transition
             # explicitly here.
             await drone_handle.signal("update_runtime", {"state": WorkflowState.RETURNING.value})
-            battery = await workflow.execute_activity(
+            await workflow.execute_activity(
                 navigate_drone,
                 args=[
                     drone_id,
@@ -147,20 +145,6 @@ class DeliveryWorkflow:
 
         await self._finalize(drone_handle, drone_id, home_base_id, order.id, incident=False)
         return f"Order {order.id} completed"
-
-    async def _log_event(self, message: str, event_type: FleetEventType) -> None:
-        """Persist a fleet event through the local activity (Redis-backed)."""
-        event = FleetEvent(
-            id=workflow.uuid4().hex,
-            time=workflow.now().isoformat(),
-            type=event_type,
-            message=message,
-        )
-        await workflow.execute_local_activity(
-            log_fleet_event,
-            event,
-            start_to_close_timeout=_LOG_EVENT_TIMEOUT,
-        )
 
     async def _run_anomaly_handler(
         self,
@@ -216,7 +200,7 @@ class DeliveryWorkflow:
             workflow.logger.warning("Anomaly agent failed, defaulting to abort: %s", err)
             action = ACTION_ABORT
 
-        await self._log_event(f"🤖 Recovery agent → {action}", FleetEventType.INFO)
+        await log_event(f"🤖 Recovery agent → {action}", FleetEventType.INFO)
         return action, snapshot
 
     def _build_anomaly_prompt(
@@ -278,7 +262,7 @@ class DeliveryWorkflow:
                 f"🔋 {drone_id} diverting to {nearest_name} to recharge",
                 snapshot,
             )
-            await self._log_event(f"↩️ {drone_id} returning home", FleetEventType.SIGNAL)
+            await log_event(f"↩️ {drone_id} diverting to {nearest_name}", FleetEventType.SIGNAL)
 
     async def _emit_rtb(
         self,
@@ -291,7 +275,7 @@ class DeliveryWorkflow:
         event_type: FleetEventType = FleetEventType.SIGNAL,
     ) -> None:
         await drone_handle.signal("low_battery")
-        await self._log_event(event_message, event_type)
+        await log_event(event_message, event_type)
         await drone_handle.signal(
             "update_runtime",
             {
@@ -355,7 +339,7 @@ class DeliveryWorkflow:
         )
         if not incident:
             await drone_handle.signal("update_runtime", {"add_signal": "delivered"})
-        await self._log_event(f"🏠 {drone_id} home ✓", FleetEventType.SUCCESS)
+        await log_event(f"🏠 {drone_id} home ✓", FleetEventType.SUCCESS)
 
         await workflow.sleep(timedelta(seconds=3))
         await drone_handle.signal(

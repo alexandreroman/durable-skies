@@ -47,11 +47,3 @@ class OrderWorkflow:
     def delivery_done(self, success: bool, message: str) -> None:
         self._success = success
         self._message = message
-
-    @workflow.query
-    def get_state(self) -> dict:
-        return {
-            "status": self._status.value,
-            "success": self._success,
-            "message": self._message,
-        }

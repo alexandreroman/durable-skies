@@ -26,21 +26,19 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from ..agents import DISPATCH_DECISION_KEY, build_dispatcher_agent
 
-from .. import drone_workflow_id, order_workflow_id
-from ..activities import log_fleet_event, read_drone_availabilities_activity
+from .. import MIN_DISPATCH_BATTERY_PCT, drone_workflow_id, order_workflow_id
+from ..activities import read_drone_availabilities_activity
 from ..models import (
     DroneAvailability,
-    FleetEvent,
     FleetEventType,
     FleetState,
     Order,
     WorkflowState,
 )
 from ..world import DELIVERY_POINTS, DEPOTS
+from ._helpers import log_event
 
 _HISTORY_THRESHOLD = 2000
-_MIN_DISPATCH_BATTERY_PCT = 40.0
-_LOG_EVENT_TIMEOUT = timedelta(seconds=5)
 _READ_AVAILABILITY_TIMEOUT = timedelta(seconds=5)
 
 
@@ -88,7 +86,7 @@ class FleetWorkflow:
                 # registry), so the dispatcher polls Redis on a sleep timer. The
                 # order stays on the pending queue the whole time.
                 if not self._waiting_for_drone:
-                    await self._log_event(
+                    await log_event(
                         "⌛ Waiting for drone",
                         FleetEventType.INFO,
                     )
@@ -104,14 +102,14 @@ class FleetWorkflow:
             finally:
                 self._dispatching = False
             if drone_id is None or not any(a.drone_id == drone_id for a in dispatchable):
+                # `dispatchable` is non-empty here (checked above) so the fallback
+                # picker always returns a drone id — no further None guard needed.
                 drone_id = self._pick_idle_drone(dispatchable)
-            if drone_id is None:
-                continue
 
             # Pop after the dispatcher picks so the UI queue chip stays stable during the agent run.
             self._pending.popleft()
             drone_name = next(a.name for a in dispatchable if a.drone_id == drone_id)
-            await self._log_event(f"📦 {drone_name} dispatched", FleetEventType.SIGNAL)
+            await log_event(f"📦 {drone_name} dispatched", FleetEventType.SIGNAL)
 
             drone_handle = workflow.get_external_workflow_handle(drone_workflow_id(drone_id))
             await drone_handle.signal("assign_order", order)
@@ -182,13 +180,13 @@ class FleetWorkflow:
                 return None
 
             workflow.logger.info("Dispatcher picked %s: %s", chosen.name, reasoning)
-            await self._log_event(f"🤖 Dispatcher → {chosen.name}", FleetEventType.INFO)
+            await log_event(f"🤖 Dispatcher → {chosen.name}", FleetEventType.INFO)
             return chosen.drone_id
         except Exception as err:
             # Any failure (LLM error, sandbox hiccup, malformed decision) yields the
             # deterministic round-robin fallback so orders keep flowing.
             workflow.logger.warning("Dispatcher agent failed: %s", err)
-            await self._log_event(
+            await log_event(
                 "⚠️ Dispatcher failed, falling back to round-robin",
                 FleetEventType.INFO,
             )
@@ -216,22 +214,8 @@ class FleetWorkflow:
             dispatchable_drones_count=0,
         )
 
-    async def _log_event(self, message: str, event_type: FleetEventType) -> None:
-        """Persist a fleet event through the local activity (Redis-backed)."""
-        event = FleetEvent(
-            id=workflow.uuid4().hex,
-            time=workflow.now().isoformat(),
-            type=event_type,
-            message=message,
-        )
-        await workflow.execute_local_activity(
-            log_fleet_event,
-            event,
-            start_to_close_timeout=_LOG_EVENT_TIMEOUT,
-        )
-
     def _is_dispatchable(self, a: DroneAvailability) -> bool:
-        return a.state == WorkflowState.IDLE and a.battery_pct > _MIN_DISPATCH_BATTERY_PCT and not a.paused
+        return a.state == WorkflowState.IDLE and a.battery_pct > MIN_DISPATCH_BATTERY_PCT and not a.paused
 
     def _pick_idle_drone(self, dispatchable: list[DroneAvailability]) -> str | None:
         """Deterministic fallback: first candidate by sorted drone_id.

@@ -16,13 +16,12 @@ from typing import Any
 from temporalio import workflow
 from temporalio.exceptions import ChildWorkflowError
 
-from .. import TASK_QUEUE
-from ..activities import log_fleet_event, write_drone_availability_activity
+from .. import MIN_DISPATCH_BATTERY_PCT, TASK_QUEUE
+from ..activities import write_drone_availability_activity
 from ..models import (
     Coordinate,
     DroneAvailability,
     DroneRuntimeState,
-    FleetEvent,
     FleetEventType,
     FlightLeg,
     FlightLegKind,
@@ -31,15 +30,13 @@ from ..models import (
     Order,
     WorkflowState,
 )
+from ._helpers import log_event
 from .delivery import DeliveryWorkflow
 
 _HISTORY_THRESHOLD = 2000
 _CHARGE_STEP_PCT = 2.0
 _CHARGE_STEP_DELAY_S = 2.0
-# Must match fleet._MIN_DISPATCH_BATTERY_PCT — see progressive_charging_and_dispatch_gate memory.
-_MIN_DISPATCH_BATTERY_PCT = 40.0
 _PUBLISH_TIMEOUT = timedelta(seconds=5)
-_LOG_EVENT_TIMEOUT = timedelta(seconds=5)
 
 
 def _build_flight_plan(order: Order, home_base_id: str) -> FlightPlan:
@@ -261,7 +258,7 @@ class DroneWorkflow:
         if self._paused:
             return
         self._paused = True
-        await self._log_event(f"⏸ {self._name} paused", FleetEventType.INFO)
+        await log_event(f"⏸ {self._name} paused", FleetEventType.INFO)
         await self._publish_availability()
 
     @workflow.signal
@@ -269,7 +266,7 @@ class DroneWorkflow:
         if not self._paused:
             return
         self._paused = False
-        await self._log_event(f"▶ {self._name} resumed", FleetEventType.INFO)
+        await log_event(f"▶ {self._name} resumed", FleetEventType.INFO)
         await self._publish_availability()
 
     @workflow.query
@@ -277,7 +274,7 @@ class DroneWorkflow:
         return self._snapshot()
 
     def _idle_state(self) -> WorkflowState:
-        return WorkflowState.CHARGING if self._battery_pct <= _MIN_DISPATCH_BATTERY_PCT else WorkflowState.IDLE
+        return WorkflowState.CHARGING if self._battery_pct <= MIN_DISPATCH_BATTERY_PCT else WorkflowState.IDLE
 
     def _snapshot(self) -> DroneRuntimeState:
         assert self._drone_id is not None
@@ -318,18 +315,4 @@ class DroneWorkflow:
             write_drone_availability_activity,
             availability,
             start_to_close_timeout=_PUBLISH_TIMEOUT,
-        )
-
-    async def _log_event(self, message: str, event_type: FleetEventType) -> None:
-        """Persist a fleet event through the local activity (Redis-backed)."""
-        event = FleetEvent(
-            id=workflow.uuid4().hex,
-            time=workflow.now().isoformat(),
-            type=event_type,
-            message=message,
-        )
-        await workflow.execute_local_activity(
-            log_fleet_event,
-            event,
-            start_to_close_timeout=_LOG_EVENT_TIMEOUT,
         )

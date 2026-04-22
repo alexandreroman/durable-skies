@@ -16,11 +16,11 @@ DISPATCH_DECISION_KEY = "dispatch_decision"
 _FLEET_ANALYST_INSTRUCTION = """You are a fleet analyst.
 
 The user message contains a JSON list of idle drones, each with: id, name,
-home_base_id, battery_pct, position (lat/lon).
+home_base_id, battery_pct.
 
 Briefly assess which drones are the best candidates for a new delivery based
-on battery level and geographic position. Output a short paragraph — no
-bullet lists, no JSON. Do not call any tools.
+on battery level and home base. Output a short paragraph — no bullet lists,
+no JSON. Do not call any tools.
 """
 
 _ORDER_ANALYST_INSTRUCTION = """You are an order analyst.

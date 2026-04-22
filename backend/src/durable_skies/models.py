@@ -95,8 +95,11 @@ class DroneAvailability(BaseModel):
     """Dispatcher-facing registry snapshot published by each DroneWorkflow.
 
     Semantically distinct from `DroneRuntimeState`: carries only the fields the
-    dispatcher needs to rank candidates, plus `updated_at` for staleness
-    filtering on the read side.
+    dispatcher needs to rank candidates. `updated_at` is observability metadata
+    only — it is NOT used for staleness filtering. The writer publishes only on
+    state-enum transitions, so filtering readers on freshness would strand a
+    drone that stays IDLE for longer than the cutoff. See `availability.py` for
+    the full rationale.
     """
 
     drone_id: str
