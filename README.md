@@ -1,15 +1,16 @@
-# durable-skies
+# Durable Skies
+
+[![CI](https://github.com/alexandreroman/durable-skies/actions/workflows/ci.yml/badge.svg)](https://github.com/alexandreroman/durable-skies/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Durable multi-agent drone delivery demo built on
-[Google ADK][adk] and [Temporal][temporal].
-A fleet of four autonomous drones executes delivery
+[Google ADK][adk] and [Temporal][temporal]:
+a fleet of four autonomous drones executes delivery
 missions under the supervision of LLM-powered agents
 (Anthropic Claude), with every LLM call and every
 tool invocation running as a durable Temporal
 Activity — crashes, restarts, and deploys never lose
 state mid-mission.
-
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ## Features
 
