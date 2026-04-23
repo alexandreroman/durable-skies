@@ -181,6 +181,95 @@ graph TD
 | `backend`  | Python package with the FastAPI HTTP API, Temporal workflows, activities, and ADK dispatcher + anomaly agents. |
 | `frontend` | Nuxt 4 + Vue 3 + Tailwind 4 dashboard for monitoring the fleet.                                                |
 
+## Agents
+
+Two ADK agents sit at the decision points of the
+fleet. Everything else — takeoff, navigation,
+pickup, dropoff, landing — runs as a deterministic
+Temporal activity loop with no LLM in the critical
+path.
+
+Both agents run through the ADK × Temporal
+integration: every LLM call goes through
+`TemporalModel`, so each model invocation is
+recorded as a Temporal Activity and replayed
+deterministically after a crash. Each activity
+carries a human-readable summary (for example
+`Dispatcher · Fleet analyst`) so agent steps show
+up labelled in the Temporal UI.
+
+The tools the agents expose — `submit_dispatch` and
+`submit_recovery` — are pure in-memory writes to
+ADK session state; they are **not** wrapped as
+activities because they carry no side effects. The
+workflow reads the decision back from session state
+after the agent run and branches on a validated
+string.
+
+### Dispatcher
+
+Picks the best idle drone for each pending order.
+Invoked from `FleetWorkflow` whenever at least one
+drone is dispatchable (IDLE with battery > 40%).
+Source:
+[`agents/dispatcher.py`](backend/src/durable_skies/agents/dispatcher.py).
+
+The dispatcher is a `SequentialAgent` with two
+stages:
+
+1. **Analysts** — a `ParallelAgent` running two
+   fast-model sub-agents (Haiku by default):
+   - `fleet_analyst` summarizes the pool of idle
+     drones (id, name, home base, battery).
+   - `order_analyst` summarizes the pending order
+     (pickup base, dropoff point, payload weight).
+2. **Picker** — `dispatcher_picker` on the main
+   model (Sonnet by default). It receives both
+   analyses as template variables and picks one
+   drone by calling
+   `submit_dispatch(drone_id, reasoning)`.
+
+The workflow reads the choice back from session
+state under `DISPATCH_DECISION_KEY`, validates the
+drone id against the current dispatchable list,
+and signals `DroneWorkflow.assign_order`. Any
+failure — LLM error, invalid id, session hiccup —
+falls back to a deterministic round-robin picker
+so orders keep flowing.
+
+### Anomaly handler
+
+Picks a recovery action after an in-flight
+incident. Invoked from `DeliveryWorkflow`'s
+exception handler when any activity in the mission
+loop raises (typically `battery_critical` during
+flight). Source:
+[`agents/anomaly.py`](backend/src/durable_skies/agents/anomaly.py).
+
+The anomaly handler is a single main-model `Agent`
+(Sonnet by default). Its prompt describes the
+incident and includes live telemetry — current
+position, home-base distance, and nearest-base
+distance — read from Redis through the
+`read_drone_telemetry` activity. The agent picks
+one of three recovery actions by calling
+`submit_recovery(action, reasoning)`:
+
+| Action                        | Behaviour                                                      |
+| ----------------------------- | -------------------------------------------------------------- |
+| `abort_return_home`           | Fly straight back to the drone's home base. Order fails.       |
+| `emergency_land_nearest_base` | Land at the closest base, which may not be home. Order fails.  |
+| `divert_to_recharge`          | Fly to the nearest base, recharge, then fly home. Order fails. |
+
+`submit_recovery` coerces any unknown action to
+`abort_return_home`. If the agent run itself fails,
+the workflow also defaults to `abort_return_home`
+as a safety net, so the drone always has a defined
+recovery path. Recovery flights are executed
+through the `fly_drone_to_base` activity so the
+drone streams live telemetry on the way rather
+than teleporting.
+
 ## License
 
 This project is licensed under the Apache-2.0
