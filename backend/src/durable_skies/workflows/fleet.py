@@ -26,16 +26,14 @@ from temporalio import workflow
 with workflow.unsafe.imports_passed_through():
     from ..agents import DISPATCH_DECISION_KEY, build_dispatcher_agent
 
-from .. import MIN_DISPATCH_BATTERY_PCT, drone_workflow_id, order_workflow_id
+from .. import drone_workflow_id, is_dispatchable, order_workflow_id
 from ..activities import read_drone_availabilities_activity
 from ..models import (
     DroneAvailability,
     FleetEventType,
-    FleetState,
+    FleetSupervisorState,
     Order,
-    WorkflowState,
 )
-from ..world import DELIVERY_POINTS, DEPOTS
 from ._helpers import log_event
 
 _HISTORY_THRESHOLD = 2000
@@ -201,30 +199,14 @@ class FleetWorkflow:
         self._shutdown = True
 
     @workflow.query
-    def get_fleet_state(self) -> FleetState:
-        # Drones are assembled by the API layer from per-drone queries; the fleet
-        # query no longer owns the registry. `events` comes from Redis too.
-        return FleetState(
-            drones=[],
-            bases=list(DEPOTS),
-            delivery_points=list(DELIVERY_POINTS),
-            events=[],
-            pending_orders_count=len(self._pending),
-            dispatching=self._dispatching,
-            dispatchable_drones_count=0,
-        )
+    def get_fleet_state(self) -> FleetSupervisorState:
+        return FleetSupervisorState(pending_orders_count=len(self._pending), dispatching=self._dispatching)
 
     def _is_dispatchable(self, a: DroneAvailability) -> bool:
-        return a.state == WorkflowState.IDLE and a.battery_pct > MIN_DISPATCH_BATTERY_PCT and not a.paused
+        return is_dispatchable(a.state, a.battery_pct, a.paused)
 
     def _pick_idle_drone(self, dispatchable: list[DroneAvailability]) -> str | None:
-        """Deterministic fallback: first candidate by sorted drone_id.
-
-        The sort makes the choice reproducible under replay (Redis returns hash
-        fields in insertion order, which is not stable across rewrites). Round-
-        robin fairness is no longer threaded across deliveries — with a stateless
-        fleet it would require extra Redis state for marginal benefit.
-        """
+        """Deterministic fallback under replay: first candidate by sorted drone_id."""
         if not dispatchable:
             return None
         return sorted(dispatchable, key=lambda a: a.drone_id)[0].drone_id

@@ -12,7 +12,7 @@ import asyncio
 import contextlib
 import logging
 from contextlib import asynccontextmanager
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -22,21 +22,27 @@ from temporalio.contrib.google_adk_agents import GoogleAdkPlugin
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
-from .. import MIN_DISPATCH_BATTERY_PCT, TASK_QUEUE, drone_workflow_id, order_workflow_id
+from .. import TASK_QUEUE, drone_workflow_id, is_dispatchable, order_workflow_id
 from ..config import get_settings
 from ..events import read_fleet_events
-from ..models import Coordinate, DroneRuntimeState, FleetState, Order, WorkflowState
+from ..models import Coordinate, DroneRuntimeState, FleetState, FleetSupervisorState, Order
 from ..redis_client import close_redis_client
 from ..telemetry import read_drone_telemetries
 from ..workflows import DroneWorkflow, FleetWorkflow, OrderWorkflow
-from ..world import initial_drone_startups, initial_drones
+from ..world import DELIVERY_POINTS, DEPOTS, DRONE_SPECS
 
-# Baseline fleet definitions are constant at runtime; compute once so the 500 ms
-# /fleet polling loop doesn't rebuild Pydantic models on every tick. Consumers
-# must treat these as read-only — `_overlay_telemetry` already uses model_copy.
-_BASELINE_DRONES: list[DroneRuntimeState] = initial_drones()
-_BASELINE_DRONES_BY_ID: dict[str, DroneRuntimeState] = {d.id: d for d in _BASELINE_DRONES}
-_BASELINE_DRONE_STARTUPS: list[tuple[str, str, str, Coordinate]] = initial_drone_startups()
+# Read-only baseline derived from the single DRONE_SPECS source of truth. Used
+# as a fallback when a per-drone query fails so /fleet still returns a full list.
+_BASELINE_DRONES_BY_ID: dict[str, DroneRuntimeState] = {
+    spec.id: DroneRuntimeState(
+        id=spec.id,
+        name=spec.name,
+        home_base_id=spec.home_base_id,
+        position=spec.home_location,
+    )
+    for spec in DRONE_SPECS
+}
+_KNOWN_DRONE_IDS: frozenset[str] = frozenset(_BASELINE_DRONES_BY_ID)
 
 FLEET_WORKFLOW_ID = "fleet-supervisor"
 
@@ -67,16 +73,16 @@ async def lifespan(app: FastAPI):
 
     # Start one DroneWorkflow per drone. These are long-lived entity workflows
     # that own per-drone runtime state and route orders to DeliveryWorkflow children.
-    for drone_id, name, home_base_id, home_location in _BASELINE_DRONE_STARTUPS:
-        wf_id = drone_workflow_id(drone_id)
+    for spec in DRONE_SPECS:
+        wf_id = drone_workflow_id(spec.id)
         try:
             await client.start_workflow(
                 DroneWorkflow.run,
                 args=[
-                    drone_id,
-                    name,
-                    home_base_id,
-                    home_location,
+                    spec.id,
+                    spec.name,
+                    spec.home_base_id,
+                    spec.home_location,
                     settings.anthropic_model,
                 ],
                 id=wf_id,
@@ -131,7 +137,7 @@ def _overlay_telemetry(drone: DroneRuntimeState, telemetry: dict | None) -> Dron
     """
     if telemetry is None:
         return drone
-    update: dict[str, object] = {}
+    update: dict[str, Any] = {}
     if (pos := telemetry.get("position")) is not None:
         update["position"] = Coordinate.model_validate(pos)
     if (battery := telemetry.get("battery_pct")) is not None:
@@ -152,7 +158,9 @@ async def get_fleet() -> FleetState:
     # Redis telemetry provides live position/battery on top; the fleet event log comes from Redis.
     # Fire everything in parallel.
     drone_ids = list(_BASELINE_DRONES_BY_ID.keys())
-    fleet_task = asyncio.create_task(asyncio.wait_for(fleet_handle.query(FleetWorkflow.get_fleet_state), timeout=2.0))
+    fleet_task: asyncio.Task[FleetSupervisorState] = asyncio.create_task(
+        asyncio.wait_for(fleet_handle.query(FleetWorkflow.get_fleet_state), timeout=2.0)
+    )
     drone_tasks: dict[str, asyncio.Task[DroneRuntimeState | None]] = {
         drone_id: asyncio.create_task(_query_drone(client, drone_id)) for drone_id in drone_ids
     }
@@ -184,15 +192,15 @@ async def get_fleet() -> FleetState:
         queried = drone_tasks[drone_id].result() or base
         merged.append(_overlay_telemetry(queried, telemetries.get(drone_id)))
 
-    dispatchable = sum(
-        1 for d in merged if d.state == WorkflowState.IDLE and d.battery_pct > MIN_DISPATCH_BATTERY_PCT and not d.paused
-    )
-    return fleet_state.model_copy(
-        update={
-            "drones": merged,
-            "events": events_task.result(),
-            "dispatchable_drones_count": dispatchable,
-        }
+    dispatchable = sum(1 for d in merged if is_dispatchable(d.state, d.battery_pct, d.paused))
+    return FleetState(
+        drones=merged,
+        bases=list(DEPOTS),
+        delivery_points=list(DELIVERY_POINTS),
+        events=events_task.result(),
+        pending_orders_count=fleet_state.pending_orders_count,
+        dispatching=fleet_state.dispatching,
+        dispatchable_drones_count=dispatchable,
     )
 
 
@@ -212,7 +220,7 @@ async def submit_order(order: Order) -> dict[str, str]:
 
 
 def _assert_known_drone(drone_id: str) -> None:
-    if drone_id not in _BASELINE_DRONES_BY_ID:
+    if drone_id not in _KNOWN_DRONE_IDS:
         raise HTTPException(status_code=404, detail=f"unknown drone id: {drone_id}")
 
 

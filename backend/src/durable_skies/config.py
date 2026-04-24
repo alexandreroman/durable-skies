@@ -31,6 +31,6 @@ def get_settings() -> Settings:
     # Resolve the repo-root .env lazily: doing this at module import time would
     # trigger RestrictedWorkflowAccessError when the Temporal sandbox validates
     # workflow modules that transitively import this config.
-    root = Path(__file__).resolve().parent.parent.parent.parent
+    root = Path(__file__).resolve().parents[3]
     load_dotenv(root / ".env")
     return Settings()

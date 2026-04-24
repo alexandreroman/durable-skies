@@ -24,9 +24,7 @@ from .redis_client import get_redis_client
 log = logging.getLogger("durable_skies.events")
 
 _EVENTS_KEY = "fleet:events"
-# Matches the previous in-workflow event cap intent (was 40) but widened to 200
-# now that Redis absorbs the cost — gives the UI more scroll-back for free.
-_MAX_EVENTS = 200
+_MAX_EVENTS = 200  # upper bound on the displayed event log
 
 
 async def write_fleet_event(event: FleetEvent) -> None:

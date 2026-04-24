@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { Base, DeliveryPoint, Drone, FlightLegKind, FlightLegStatus } from "../types/fleet";
+import type { Base, DeliveryPoint, Drone, FlightLegKind, FlightLegStatus, WorkflowState, WorkflowStateStyle } from "../types/fleet";
 import { WORKFLOW_STATES, latLngToXY } from "../composables/fleetConstants";
 
 const props = defineProps<{
@@ -35,6 +35,12 @@ interface TweenEntry {
 }
 
 const tweens = new Map<string, TweenEntry>();
+
+const HIDDEN_STATES: ReadonlySet<WorkflowState> = new Set<WorkflowState>([
+  "IDLE",
+  "CHARGING",
+  "COMPLETED",
+]);
 
 function tweenProgress(entry: TweenEntry, now: number): number {
   if (entry.startedAt === 0 || entry.durationMs <= 0) return 1;
@@ -98,7 +104,7 @@ watch(
 );
 
 const legendStates = Object.entries(WORKFLOW_STATES).filter(([k]) => k !== "IDLE" && k !== "CHARGING") as Array<
-  [string, (typeof WORKFLOW_STATES)[keyof typeof WORKFLOW_STATES]]
+  [string, WorkflowStateStyle]
 >;
 
 interface RenderedLeg {
@@ -235,7 +241,7 @@ function draw(): void {
   }
 
   for (const drone of props.drones) {
-    if (drone.state === "IDLE" || drone.state === "CHARGING" || drone.state === "COMPLETED") continue;
+    if (HIDDEN_STATES.has(drone.state)) continue;
     const rendered = renderedPosition(drone.id, now);
     const pos = latLngToXY(rendered.lat, rendered.lon, W, H);
 
@@ -354,7 +360,7 @@ function hitTestDrone(event: MouseEvent, canvas: HTMLCanvasElement): string | nu
   const now = performance.now();
   let found: string | null = null;
   for (const drone of props.drones) {
-    if (drone.state === "IDLE" || drone.state === "CHARGING" || drone.state === "COMPLETED") continue;
+    if (HIDDEN_STATES.has(drone.state)) continue;
     const rendered = renderedPosition(drone.id, now);
     const { x, y } = latLngToXY(rendered.lat, rendered.lon, rect.width, rect.height);
     if (Math.hypot(x - mx, y - my) < 16) found = drone.id;

@@ -91,12 +91,11 @@ class DroneWorkflow:
         initial_battery_pct: float = 100.0,
         initial_paused: bool = False,
     ) -> None:
-        home_location = Coordinate.model_validate(home_location)
         self._drone_id = drone_id
         self._name = name
         self._home_base_id = home_base_id
         self._home_location = home_location
-        self._position = home_location.model_copy()
+        self._position = home_location
         self._battery_pct = initial_battery_pct
         self._paused = initial_paused
         self._state = self._idle_state()
@@ -166,7 +165,7 @@ class DroneWorkflow:
             self._signals = []
             self._target_point_id = None
             if self._home_location is not None:
-                self._position = self._home_location.model_copy()
+                self._position = self._home_location
             await self._publish_availability()
 
             if workflow.info().get_current_history_length() > _HISTORY_THRESHOLD:

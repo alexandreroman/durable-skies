@@ -170,7 +170,7 @@ function orderLabel(orderId: string): string {
             <rect
               x="3"
               y="6.5"
-              :width="(Math.max(0, Math.min(100, drone.battery_pct)) / 100) * 8"
+              :width="(drone.battery_pct / 100) * 8"
               height="3"
               fill="currentColor"
             />

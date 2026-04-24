@@ -192,8 +192,6 @@ class DeliveryWorkflow:
             )
             decision = (refreshed.state or {}).get(RECOVERY_DECISION_KEY, {}) if refreshed else {}
             action = decision.get("action", ACTION_ABORT)
-            if action not in {ACTION_ABORT, ACTION_EMERGENCY_LAND, ACTION_DIVERT_RECHARGE}:
-                action = ACTION_ABORT
         except Exception as err:
             # Safety net: any agent failure (LLM error, sandbox hiccup, malformed decision)
             # falls back to the safest recovery so the workflow always progresses.
@@ -262,7 +260,6 @@ class DeliveryWorkflow:
                 f"🔋 {drone_id} diverting to {nearest_name} to recharge",
                 snapshot,
             )
-            await log_event(f"↩️ {drone_id} diverting to {nearest_name}", FleetEventType.SIGNAL)
 
     async def _emit_rtb(
         self,

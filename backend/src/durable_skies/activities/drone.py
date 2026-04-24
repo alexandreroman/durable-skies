@@ -10,9 +10,6 @@ needs:
   a failed write never breaks a mission.
 - Fleet event log (takeoff/pickup/delivery notifications): written directly
   to Redis via `write_fleet_event`. Same best-effort contract.
-
-The ADK pilot agent (running inside the per-delivery workflow) invokes these
-activities through `activity_tool`.
 """
 
 import asyncio

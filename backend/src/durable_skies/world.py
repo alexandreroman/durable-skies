@@ -4,7 +4,9 @@ The same coordinates power the Nuxt map and the Temporal workflows — they are
 served to the UI via `GET /fleet` so there is a single source of truth.
 """
 
-from .models import Base, Coordinate, DeliveryPoint, DroneRuntimeState, WorkflowState
+from typing import NamedTuple
+
+from .models import Base, Coordinate, DeliveryPoint
 
 DEPOTS: list[Base] = [
     Base(id="base-north", name="North Depot", location=Coordinate(lat=48.893, lon=2.342)),
@@ -23,44 +25,25 @@ DELIVERY_POINTS: list[DeliveryPoint] = [
     DeliveryPoint(id="dp-8", name="DP-8", location=Coordinate(lat=48.848, lon=2.426)),
 ]
 
-# 4 drones across 3 depots, NATO-phonetic names.
-_DRONE_ASSIGNMENTS: tuple[tuple[str, str], ...] = (
-    ("Alpha", "base-north"),
-    ("Bravo", "base-north"),
-    ("Charlie", "base-south"),
-    ("Echo", "base-east"),
+
+class DroneSpec(NamedTuple):
+    id: str
+    name: str
+    home_base_id: str
+    home_location: Coordinate
+
+
+_DEPOTS_BY_ID: dict[str, Base] = {b.id: b for b in DEPOTS}
+
+
+def _spec(name: str, base_id: str) -> DroneSpec:
+    return DroneSpec(id=name, name=name, home_base_id=base_id, home_location=_DEPOTS_BY_ID[base_id].location)
+
+
+# 4 drones across 3 depots, NATO-phonetic names. Drone id == display name.
+DRONE_SPECS: tuple[DroneSpec, ...] = (
+    _spec("Alpha", "base-north"),
+    _spec("Bravo", "base-north"),
+    _spec("Charlie", "base-south"),
+    _spec("Echo", "base-east"),
 )
-
-
-def _base_by_id(base_id: str) -> Base:
-    for base in DEPOTS:
-        if base.id == base_id:
-            return base
-    raise KeyError(base_id)
-
-
-def initial_drones() -> list[DroneRuntimeState]:
-    """Build the initial fleet; each call returns fresh instances."""
-    drones: list[DroneRuntimeState] = []
-    for name, base_id in _DRONE_ASSIGNMENTS:
-        base = _base_by_id(base_id)
-        drones.append(
-            DroneRuntimeState(
-                id=name,
-                name=name,
-                home_base_id=base_id,
-                state=WorkflowState.IDLE,
-                position=base.location.model_copy(),
-                battery_pct=100.0,
-            )
-        )
-    return drones
-
-
-def initial_drone_startups() -> list[tuple[str, str, str, Coordinate]]:
-    """Return (drone_id, name, home_base_id, home_location) tuples for startup."""
-    startups: list[tuple[str, str, str, Coordinate]] = []
-    for name, base_id in _DRONE_ASSIGNMENTS:
-        base = _base_by_id(base_id)
-        startups.append((name, name, base_id, base.location.model_copy()))
-    return startups

@@ -147,7 +147,18 @@ class FleetState(BaseModel):
     drones: list[DroneRuntimeState]
     bases: list[Base]
     delivery_points: list[DeliveryPoint]
-    events: list[FleetEvent]  # newest first, up to 40
+    events: list[FleetEvent]
     pending_orders_count: int = 0
     dispatching: bool = False
     dispatchable_drones_count: int = 0
+
+
+class FleetSupervisorState(BaseModel):
+    """Minimal payload returned by the FleetWorkflow query.
+
+    Drones, events, and dispatchable count are assembled by the API layer from
+    per-drone queries, Redis telemetry, and the Redis event log.
+    """
+
+    pending_orders_count: int = 0
+    dispatching: bool = False
