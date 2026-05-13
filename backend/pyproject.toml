@@ -7,16 +7,16 @@ authors = [
 ]
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "temporalio[google-adk]>=1.24.0",
-    "google-adk>=1.0.0",
-    "litellm>=1.50.0",
-    "anthropic>=0.40.0",
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.32.0",
-    "pydantic>=2.9.0",
-    "pydantic-settings>=2.6.0",
-    "python-dotenv>=1.0.1",
-    "redis>=6.4",
+    "temporalio[google-adk]>=1.27.0",
+    "google-adk>=1.33.0",
+    "litellm>=1.83.14",
+    "anthropic>=0.101.0",
+    "fastapi>=0.136.1",
+    "uvicorn[standard]>=0.46.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.14.1",
+    "python-dotenv>=1.2.2",
+    "redis>=7.4",
 ]
 
 [project.scripts]
@@ -25,8 +25,8 @@ durable-skies-api = "durable_skies.api.server:main"
 
 [dependency-groups]
 dev = [
-    "ruff>=0.8.0",
-    "watchfiles>=0.24.0",
+    "ruff>=0.15.12",
+    "watchfiles>=1.1.1",
 ]
 
 [build-system]

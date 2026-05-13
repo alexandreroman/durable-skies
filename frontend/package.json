@@ -14,15 +14,15 @@
     "format": "prettier --write ."
   },
   "dependencies": {
-    "nuxt": "^4.4.2",
-    "vue": "^3.5.32"
+    "nuxt": "^4.4.5",
+    "vue": "^3.5.34"
   },
   "devDependencies": {
-    "@nuxt/eslint": "^1.0.0",
-    "@tailwindcss/vite": "^4.1.0",
-    "eslint": "^9.17.0",
-    "prettier": "^3.4.0",
-    "tailwindcss": "^4.1.0",
-    "typescript": "^5.6.0"
+    "@nuxt/eslint": "^1.15.2",
+    "@tailwindcss/vite": "^4.3.0",
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^6.0.3"
   }
 }
