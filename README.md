@@ -138,7 +138,7 @@ run `make worker`, `make api`, and `make ui` in
 separate terminals if you prefer.
 
 This flow additionally requires Python 3.12+,
-[uv][uv], Node.js 20+, and [pnpm][pnpm] on your
+[uv][uv], Node.js 22+, and [pnpm][pnpm] on your
 host.
 
 ## Architecture
