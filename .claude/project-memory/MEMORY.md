@@ -22,3 +22,4 @@
 - [Progressive charging + 40% dispatch gate + CHARGING state](references/progressive_charging_and_dispatch_gate.md) — battery carries via DroneWorkflow sleep loop; dispatcher filters on > 40%; at-home drones split IDLE/CHARGING
 - [Compensation paths must stream telemetry, not teleport](references/compensation_must_stream_telemetry.md) — recovery flights route through fly_drone_to_base; FleetMap filter hides IDLE/CHARGING/COMPLETED so teleports vanish
 - [Freeze workflow _position at incident boundary](references/freeze_position_at_incident.md) — navigate_drone must signal position at battery_critical; DroneWorkflow._position otherwise defaults to home and lies when Redis TTL expires
+- [Frontend Dockerfile pinned to node:24-slim](references/frontend_docker_node24.md) — corepack pnpm 11.1.2 needs node:sqlite (Node 22+); Node 24 is current active LTS
