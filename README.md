@@ -65,7 +65,7 @@ cd durable-skies
 cp .env.example .env
 # Edit .env and set ANTHROPIC_API_KEY=sk-ant-...
 
-make run   # or: docker-compose up
+make app-up   # or: docker compose up -d --build
 ```
 
 This brings up Temporal, Redis, the worker, the API,
