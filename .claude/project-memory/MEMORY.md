@@ -23,3 +23,4 @@
 - [Compensation paths must stream telemetry, not teleport](references/compensation_must_stream_telemetry.md) — recovery flights route through fly_drone_to_base; FleetMap filter hides IDLE/CHARGING/COMPLETED so teleports vanish
 - [Freeze workflow _position at incident boundary](references/freeze_position_at_incident.md) — navigate_drone must signal position at battery_critical; DroneWorkflow._position otherwise defaults to home and lies when Redis TTL expires
 - [Frontend Dockerfile pinned to node:24-slim](references/frontend_docker_node24.md) — corepack pnpm 11.1.2 needs node:sqlite (Node 22+); Node 24 is current active LTS
+- [cmux per-workspace compose port remapping](references/cmux_compose_port_remapping.md) — .cmux/post-create.sh generates compose.override.yml offsetting all host ports from $CMUX_PORT
