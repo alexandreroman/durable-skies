@@ -88,7 +88,7 @@ infra-logs: ## Follow Temporal dev server + Redis logs
 
 .PHONY: app-up
 app-up: ## Bring up the full stack in Docker (Temporal + Redis + worker + API + frontend)
-	docker compose up -d --build
+	docker compose up -d
 	$(show_urls)
 
 .PHONY: app-down
